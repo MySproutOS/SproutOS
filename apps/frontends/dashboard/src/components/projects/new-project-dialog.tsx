@@ -29,6 +29,7 @@ import {
   useCreateProject,
   useGithubOwners,
   useGithubRepositories,
+  useManualUpstreamCheck,
   useRepositoryNameCheck,
 } from "@frontends/dashboard/data/new-project"
 import { useStoreListings } from "@frontends/dashboard/data/store"
@@ -279,6 +280,19 @@ function NewProjectForm({
     (candidate) => candidate.githubRepoId === githubRepoId,
   )
   const manualUpstream = parseRepoRef(manualUpstreamRef)
+  const debouncedManualUpstreamRef = useDebounced(manualUpstreamRef, 400)
+  const debouncedManualUpstream = parseRepoRef(debouncedManualUpstreamRef)
+  const manualUpstreamSettled = manualUpstreamRef === debouncedManualUpstreamRef
+  const manualUpstreamCheck = useManualUpstreamCheck(
+    orgSlug,
+    debouncedManualUpstream === null
+      ? "invalid/invalid"
+      : `${debouncedManualUpstream.owner}/${debouncedManualUpstream.repo}`,
+    githubRepoId,
+    source === "repository" &&
+      selectedRepository?.fork === false &&
+      debouncedManualUpstream !== null,
+  )
   const effectiveManualUpstream = selectedRepository?.fork === true ? null : manualUpstream
   const tracksUpstream =
     source === "store"
@@ -295,6 +309,9 @@ function NewProjectForm({
     (source !== "template" || template !== null) &&
     (source !== "repository" || githubRepoId !== null) &&
     (source !== "repository" || manualUpstreamRef.trim() === "" || manualUpstream !== null) &&
+    (source !== "repository" ||
+      manualUpstreamRef.trim() === "" ||
+      (manualUpstreamSettled && manualUpstreamCheck.data?.accessible === true)) &&
     (source !== "repository" || isProjectRootDir(rootDir)) &&
     (!needsRepoName || (repositoryName.length > 0 && nameCheck.data?.available === true))
 
@@ -626,6 +643,39 @@ function NewProjectForm({
                       Enter a GitHub URL or owner/repository.
                     </p>
                   )}
+                  {manualUpstream !== null && !manualUpstreamSettled && (
+                    <p className="text-xs text-muted-foreground">Waiting to check this upstream…</p>
+                  )}
+                  {manualUpstream !== null &&
+                    manualUpstreamSettled &&
+                    manualUpstreamCheck.isFetching && (
+                      <p className="text-xs text-muted-foreground">Checking GitHub access…</p>
+                    )}
+                  {manualUpstream !== null &&
+                    manualUpstreamSettled &&
+                    manualUpstreamCheck.data?.accessible === true && (
+                      <p className="flex items-center gap-1 text-xs text-leaf">
+                        <CheckIcon className="size-3" aria-hidden="true" />
+                        Accessible on GitHub. Default branch:{" "}
+                        {manualUpstreamCheck.data.defaultBranch}
+                      </p>
+                    )}
+                  {manualUpstream !== null &&
+                    manualUpstreamSettled &&
+                    manualUpstreamCheck.data?.accessible === false && (
+                      <p className="flex items-center gap-1 text-xs text-destructive">
+                        <XIcon className="size-3" aria-hidden="true" />
+                        {manualUpstreamCheck.data.reason}
+                      </p>
+                    )}
+                  {manualUpstream !== null &&
+                    manualUpstreamSettled &&
+                    manualUpstreamCheck.isError && (
+                      <p className="text-xs text-destructive">
+                        SproutOS could not check this upstream. Try again before creating the
+                        project.
+                      </p>
+                    )}
                 </>
               )}
             </div>

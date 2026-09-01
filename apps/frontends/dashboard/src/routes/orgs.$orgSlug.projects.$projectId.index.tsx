@@ -7,10 +7,12 @@ import {
   KeyRoundIcon,
   MonitorPlayIcon,
   RocketIcon,
+  RotateCcwIcon,
   ScrollTextIcon,
   SlidersHorizontalIcon,
 } from "lucide-react"
 import { Badge } from "@ui/base/ui/badge"
+import { Alert, AlertDescription, AlertTitle } from "@ui/base/ui/alert"
 import { Button } from "@ui/base/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@ui/base/ui/card"
 import { Money } from "@ui/base/ui/money"
@@ -20,7 +22,12 @@ import { ListError } from "@frontends/dashboard/components/list-states"
 import { PageBody, PageHeader } from "@frontends/dashboard/components/shell/page-header"
 import { ProductionDeployment } from "@frontends/dashboard/components/projects/production-deployment"
 import { GroupChildren } from "@frontends/dashboard/components/projects/group-children"
-import { PROJECT_STATUS_LABELS, useProject } from "@frontends/dashboard/data/projects"
+import {
+  PROJECT_STATUS_LABELS,
+  useProject,
+  useProjectProvisionJobs,
+  useRetryProvision,
+} from "@frontends/dashboard/data/projects"
 import { useRecentJobs } from "@frontends/dashboard/data/workflows"
 
 export const Route = createFileRoute("/orgs/$orgSlug/projects/$projectId/")({
@@ -41,6 +48,11 @@ function ProjectDetail() {
   */
   const jobs = useRecentJobs(orgSlug)
   const projectJobs = jobs.data?.filter((job) => job.projectId === projectId)
+  const provisionJobs = useProjectProvisionJobs(orgSlug, projectId)
+  const retryProvision = useRetryProvision(orgSlug, projectId)
+  const retryableProvision = provisionJobs.data?.data.find(
+    (job) => (job.kind === "provision" || job.kind === "fork") && job.state === "failed",
+  )
 
   return (
     <>
@@ -183,6 +195,38 @@ function ProjectDetail() {
                 </dl>
               </CardContent>
             </Card>
+
+            {data.status === "failed" &&
+              !data.pendingRepositoryCreation &&
+              retryableProvision !== undefined && (
+                <Alert variant="destructive">
+                  <AlertTitle>Repository setup did not finish</AlertTitle>
+                  <AlertDescription className="flex flex-col items-start gap-3">
+                    <span>
+                      GitHub created {data.repo}, but a later setup step failed. Retry resumes the
+                      same repository; it does not create another one.
+                    </span>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={retryProvision.isPending}
+                      onClick={() => {
+                        retryProvision.mutate({
+                          path: { orgSlug, projectId, jobId: retryableProvision.id },
+                        })
+                      }}
+                    >
+                      <RotateCcwIcon className={retryProvision.isPending ? "animate-spin" : ""} />
+                      {retryProvision.isPending ? "Retrying…" : "Retry setup"}
+                    </Button>
+                    {retryProvision.isError && (
+                      <span className="text-xs">
+                        SproutOS could not queue the retry. Refresh the page and try again.
+                      </span>
+                    )}
+                  </AlertDescription>
+                </Alert>
+              )}
 
             {/*
               What is actually serving, or how to make something serve.

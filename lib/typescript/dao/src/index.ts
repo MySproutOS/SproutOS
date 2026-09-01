@@ -98,6 +98,7 @@ import {
   type ProjectJobStep,
 } from "./projectJob/crud"
 import { fetchProjectJob } from "./projectJob/fetch"
+import { retryFailedProvision, type RetryProvisionResult } from "./projectJob/retry"
 import { crudProjectTemplateInstall } from "./projectTemplateInstall/crud"
 import { fetchProjectTemplateInstall } from "./projectTemplateInstall/fetch"
 import { crudProjectTemplateService } from "./projectTemplateService/crud"
@@ -234,6 +235,8 @@ export {
   fetchProject,
   fetchProjectEnvVar,
   fetchProjectJob,
+  retryFailedProvision,
+  RetryProvisionResult,
   fetchProjectTemplateInstall,
   fetchProjectTemplateService,
   fetchProjectUpdateSuggestion,

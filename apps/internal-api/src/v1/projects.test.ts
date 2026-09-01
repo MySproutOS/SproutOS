@@ -478,6 +478,94 @@ describe.skipIf(!reachable)("project routes", () => {
       expect(bogus.status).toBe(404)
     })
 
+    it("retries a failed provision against the repository GitHub already created exactly once", async () => {
+      const retryRepositoryId = v7()
+      const retryProjectId = v7()
+      const retryJobId = v7()
+      await db
+        .insertInto("repository")
+        .values({
+          id: retryRepositoryId,
+          organizationId: orgAId,
+          githubRepoId: "987654321",
+          ownerLogin: "acme-test",
+          name: `retry-${retryProjectId.slice(-8)}`,
+          provenance: "copy",
+        })
+        .execute()
+      await db
+        .insertInto("project")
+        .values({
+          id: retryProjectId,
+          organizationId: orgAId,
+          repositoryId: retryRepositoryId,
+          name: "Retry Fixture",
+          slug: `retry-${retryProjectId.slice(-8)}`,
+          state: "failed",
+          stateReason: "first push failed",
+        })
+        .execute()
+      await db
+        .insertInto("projectJob")
+        .values({
+          id: retryJobId,
+          organizationId: orgAId,
+          projectId: retryProjectId,
+          repositoryId: retryRepositoryId,
+          kind: "provision",
+          state: "failed",
+          errorCode: "GitHubTransportError",
+          errorMessage: "first push failed",
+          finishedAt: new Date(),
+          steps: JSON.stringify([
+            { key: "create_repository", label: "Creating the repository", state: "failed" },
+          ]),
+        })
+        .execute()
+
+      try {
+        const first = await call(
+          "POST",
+          `/v1/orgs/${orgA}/projects/${retryProjectId}/jobs/${retryJobId}/retry`,
+          alice,
+        )
+        const second = await call(
+          "POST",
+          `/v1/orgs/${orgA}/projects/${retryProjectId}/jobs/${retryJobId}/retry`,
+          alice,
+        )
+
+        expect(first.status).toBe(200)
+        expect(second.status).toBe(200)
+        expect(first.json).toMatchObject({ id: retryJobId, state: "queued", attempt: 1 })
+        const [project, background] = await Promise.all([
+          db
+            .selectFrom("project")
+            .select(["state", "stateReason"])
+            .where("id", "=", retryProjectId)
+            .executeTakeFirstOrThrow(),
+          db
+            .selectFrom("backgroundJob")
+            .select(["kind", "payload"])
+            .where("idempotencyKey", "=", `project.provision:retry:${retryJobId}:1`)
+            .execute(),
+        ])
+        expect(project).toEqual({ state: "provisioning", stateReason: null })
+        expect(background).toHaveLength(1)
+        expect(background[0]).toMatchObject({
+          kind: "project.provision",
+          payload: { projectJobId: retryJobId, userId: alice.id },
+        })
+      } finally {
+        await db
+          .deleteFrom("backgroundJob")
+          .where("idempotencyKey", "=", `project.provision:retry:${retryJobId}:1`)
+          .execute()
+        await db.deleteFrom("project").where("id", "=", retryProjectId).execute()
+        await db.deleteFrom("repository").where("id", "=", retryRepositoryId).execute()
+      }
+    })
+
     it("refuses to fork a listing that is not published", async () => {
       const draftId = v7()
       await db

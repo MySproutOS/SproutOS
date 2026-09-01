@@ -40,6 +40,7 @@ export {
   getRepositoryById,
   type InstallationRepositoryPage,
   listInstallationRepositories,
+  listAllInstallationRepositories,
   toRepository,
 } from "./repositories"
 export {

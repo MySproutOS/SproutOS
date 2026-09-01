@@ -42,6 +42,7 @@ import {
   type ProjectJobKind,
   type ProjectJobStep,
   provisionProject,
+  retryFailedProvision,
   type RepositoryPlan,
 } from "@lib/dao"
 import {
@@ -1892,6 +1893,51 @@ const app = new Hono()
       if (!job || job.projectId !== projectId) return throwNotFound(c, "Job not found")
 
       return c.json(serializeJob(job))
+    },
+  )
+  .post(
+    "/:orgSlug/projects/:projectId/jobs/:jobId/retry",
+    describeRoute({
+      description: "Retries failed provisioning after GitHub already created the repository",
+      responses: {
+        200: {
+          description: "The queued or already-running provisioning job",
+          content: { "application/json": { schema: resolver(projectSchemaJobResponse) } },
+        },
+        400: { description: "The job cannot be retried safely", ...errorResponse },
+        403: { description: "Caller lacks project:update", ...errorResponse },
+      },
+    }),
+    validator("param", projectSchemaJobParam),
+    requirePermission("project:update", paramResource("project", "project", "projectId")),
+    async (c) => {
+      const organization = c.var.organization
+      const user = c.var.user
+      const { jobId, projectId } = c.req.valid("param")
+      const retried = await retryFailedProvision(db, {
+        organizationId: organization.id,
+        projectId,
+        projectJobId: jobId,
+        userId: user.id,
+      })
+
+      if (retried === undefined) {
+        return throwBadRequest(
+          c,
+          "Only failed provisioning jobs whose GitHub repository was already created can be retried.",
+        )
+      }
+
+      await crudAuditLog(db).record({
+        ...auditContext(c),
+        organizationId: organization.id,
+        actorUserId: user.id,
+        action: retried.enqueued ? "project.provision_retry" : "project.provision_retry_reused",
+        resourceSrn: srnFor("project", organization.id, "project", projectId),
+        after: { projectJobId: retried.job.id, attempt: retried.job.attempt },
+      })
+
+      return c.json(serializeJob(retried.job))
     },
   )
   .post(
