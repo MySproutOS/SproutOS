@@ -31,6 +31,7 @@ sprout-core = { path = "../sprout-core" }
 thiserror.workspace = true
 tokio.workspace = true
 url = { version = "2.5", features = ["serde"] }
+uuid.workspace = true
 webbrowser = "1"
 zeroize = "1"
 
