@@ -619,17 +619,19 @@ fn join_output(
 
 #[cfg(test)]
 mod tests {
+    #[cfg(unix)]
     use std::{fs, path::Path, time::Duration};
 
+    #[cfg(unix)]
     use tempfile::tempdir;
+    #[cfg(unix)]
     use tokio::process::Command;
 
     #[cfg(unix)]
     use super::fd_scan_maximum_from_rlimit;
-    use super::{
-        ApplyLimits, IsolatedCommand, IsolationProvider, PluginRunner, ProtocolOutcome,
-        TemplateProtocol,
-    };
+    #[cfg(unix)]
+    use super::{ApplyLimits, IsolatedCommand, IsolationProvider, PluginRunner};
+    use super::{ProtocolOutcome, TemplateProtocol};
 
     #[cfg(unix)]
     #[test]
@@ -638,10 +640,14 @@ mod tests {
         assert!(fd_scan_maximum_from_rlimit(libc::RLIM_INFINITY).is_err());
     }
 
-    use crate::{ChangeKind, DeclaredChange, ErrorCode, Result, VerifiedExecutable};
+    use crate::{ChangeKind, DeclaredChange, ErrorCode};
+    #[cfg(unix)]
+    use crate::{Result, VerifiedExecutable};
 
+    #[cfg(unix)]
     struct TestIsolation;
 
+    #[cfg(unix)]
     impl IsolationProvider for TestIsolation {
         fn command(
             &self,
@@ -652,8 +658,10 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
     struct JsonProtocol;
 
+    #[cfg(unix)]
     impl TemplateProtocol<serde_json::Value> for JsonProtocol {
         fn encode_request(&self, request: &serde_json::Value) -> Result<Vec<u8>> {
             serde_json::to_vec(request)

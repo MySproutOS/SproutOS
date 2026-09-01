@@ -44,6 +44,7 @@ pub(crate) struct WindowsAppContainerCommand {
     original_workspace: PathBuf,
 }
 
+#[derive(Debug)]
 pub(crate) struct WindowsOutput {
     pub(crate) success: bool,
     pub(crate) exit_code: u32,

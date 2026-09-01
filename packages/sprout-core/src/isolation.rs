@@ -485,7 +485,7 @@ fn read_u64(bytes: &[u8], offset: usize) -> Result<u64> {
     Ok(u64::from_le_bytes(raw))
 }
 
-#[cfg(test)]
+#[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
 mod tests {
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     use std::fs;
