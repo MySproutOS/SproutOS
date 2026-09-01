@@ -198,26 +198,38 @@ pub async fn run(cli: &Cli, dependencies: &Dependencies<'_>) -> Result<String> {
             )
             .await?
         }
-        Command::Logs(LogsArgs { follow: true, .. }) => {
-            let planned = request::plan(&cli.command, organization, None)?.ok_or_else(|| {
-                CliError::Unavailable("logs has no runtime implementation".into())
-            })?;
-            let mut emit = |event: LogStreamEvent| {
-                let rendered = if cli.json {
-                    output::json_success("logs", event)?
-                } else {
-                    format!(
-                        "{} {:<8} {}",
-                        event.line.timestamp, event.line.level, event.line.message
-                    )
+        Command::Logs(args) => {
+            let project = resolve_log_project(
+                dependencies.backend,
+                credential.expose(),
+                organization,
+                &args.project,
+            )
+            .await?;
+            let planned = request::plan_logs(args, organization, &project)?;
+            if !args.follow {
+                dependencies
+                    .backend
+                    .request(planned, Some(credential.expose()))
+                    .await?
+            } else {
+                let mut emit = |event: LogStreamEvent| {
+                    let rendered = if cli.json {
+                        output::json_success("logs", event)?
+                    } else {
+                        format!(
+                            "{} {:<8} {}",
+                            event.line.timestamp, event.line.level, event.line.message
+                        )
+                    };
+                    dependencies.stream_output.write_line(&rendered)
                 };
-                dependencies.stream_output.write_line(&rendered)
-            };
-            dependencies
-                .backend
-                .follow_logs(planned, credential.expose(), &mut emit)
-                .await?;
-            return Ok(String::new());
+                dependencies
+                    .backend
+                    .follow_logs(planned, credential.expose(), &mut emit)
+                    .await?;
+                return Ok(String::new());
+            }
         }
         _ => {
             let stdin_value = read_stdin_value(&cli.command)?;
@@ -267,6 +279,64 @@ pub async fn run(cli: &Cli, dependencies: &Dependencies<'_>) -> Result<String> {
         data = found;
     }
     render(cli, request::command_name(&cli.command), data)
+}
+
+async fn resolve_log_project(
+    backend: &dyn Backend,
+    token: &str,
+    organization: Option<&str>,
+    project: &str,
+) -> Result<String> {
+    if uuid::Uuid::parse_str(project).is_ok() {
+        return Ok(project.to_owned());
+    }
+
+    let mut cursor: Option<String> = None;
+    loop {
+        let response = backend
+            .request(
+                request::plan_project_list(organization, None, cursor.as_deref(), 100)?,
+                Some(token),
+            )
+            .await?;
+        let rows = response
+            .get("data")
+            .and_then(Value::as_array)
+            .ok_or_else(|| CliError::Api("project list returned an invalid response".into()))?;
+        if let Some(row) = rows
+            .iter()
+            .find(|row| row.get("slug").and_then(Value::as_str) == Some(project))
+        {
+            return row
+                .get("id")
+                .and_then(Value::as_str)
+                .filter(|id| uuid::Uuid::parse_str(id).is_ok())
+                .map(str::to_owned)
+                .ok_or_else(|| {
+                    CliError::Api("project list returned an invalid project id".into())
+                });
+        }
+
+        let next_cursor = match response.get("nextCursor") {
+            None | Some(Value::Null) => break,
+            Some(Value::String(next)) if !next.is_empty() => next.clone(),
+            _ => {
+                return Err(CliError::Api(
+                    "project list returned an invalid pagination cursor".into(),
+                ));
+            }
+        };
+        if cursor.as_deref() == Some(next_cursor.as_str()) {
+            return Err(CliError::Api(
+                "project list repeated its pagination cursor".into(),
+            ));
+        }
+        cursor = Some(next_cursor);
+    }
+
+    Err(CliError::InvalidInput(format!(
+        "project `{project}` was not found in the selected organization"
+    )))
 }
 
 async fn wait_for_deployment(
@@ -528,28 +598,67 @@ mod tests {
             assert_eq!(request.method, request::Method::Get);
             assert_eq!(
                 request.path,
-                "/v1/orgs/acme/projects/project-1/logs/follow?since=2026-08-28T12%3A00%3A00Z&limit=100"
+                "/v1/orgs/acme/projects/01a03b96-a3d3-71f5-9f1d-af7569938433/logs/follow?since=2026-08-28T12%3A00%3A00Z&limit=100"
             );
-            let cursor = format!("1:1787918400000:{}", "A".repeat(64));
-            emit(LogStreamEvent {
-                schema_version: 1,
-                kind: "log".into(),
-                cursor: cursor.clone(),
-                line: crate::LogLine {
-                    timestamp: "2026-08-28T12:00:00.000Z".into(),
-                    cursor,
-                    level: "info".into(),
-                    message: "ready".into(),
-                    request_id: "request-1".into(),
-                    deployment_id: "deployment-1".into(),
-                    duration_ms: None,
-                    billed_ms: None,
-                    memory_mb: None,
-                    init_ms: None,
-                    cold_start: None,
-                },
-            })
+            emit_ready(emit)
         }
+    }
+
+    struct SlugFollowingBackend(Mutex<Vec<request::ApiRequest>>);
+    #[async_trait]
+    impl Backend for SlugFollowingBackend {
+        async fn request(
+            &self,
+            request: request::ApiRequest,
+            token: Option<&str>,
+        ) -> Result<Value> {
+            assert_eq!(token, Some("canary-token"));
+            assert_eq!(request.path, "/v1/orgs/acme/projects?limit=100");
+            self.0.lock().unwrap().push(request);
+            Ok(json!({
+                "data": [{
+                    "id": "01a03b96-a3d3-71f5-9f1d-af7569938433",
+                    "slug": "project-1"
+                }],
+                "nextCursor": null
+            }))
+        }
+
+        async fn follow_logs(
+            &self,
+            request: request::ApiRequest,
+            token: &str,
+            emit: &mut (dyn FnMut(LogStreamEvent) -> Result<()> + Send),
+        ) -> Result<()> {
+            assert_eq!(token, "canary-token");
+            assert_eq!(
+                request.path,
+                "/v1/orgs/acme/projects/01a03b96-a3d3-71f5-9f1d-af7569938433/logs/follow?limit=100"
+            );
+            emit_ready(emit)
+        }
+    }
+
+    fn emit_ready(emit: &mut (dyn FnMut(LogStreamEvent) -> Result<()> + Send)) -> Result<()> {
+        let cursor = format!("1:1787918400000:{}", "A".repeat(64));
+        emit(LogStreamEvent {
+            schema_version: 1,
+            kind: "log".into(),
+            cursor: cursor.clone(),
+            line: crate::LogLine {
+                timestamp: "2026-08-28T12:00:00.000Z".into(),
+                cursor,
+                level: "info".into(),
+                message: "ready".into(),
+                request_id: "request-1".into(),
+                deployment_id: "deployment-1".into(),
+                duration_ms: None,
+                billed_ms: None,
+                memory_mb: None,
+                init_ms: None,
+                cold_start: None,
+            },
+        })
     }
 
     #[tokio::test]
@@ -655,7 +764,7 @@ mod tests {
             "--org",
             "acme",
             "logs",
-            "project-1",
+            "01a03b96-a3d3-71f5-9f1d-af7569938433",
             "--follow",
             "--since",
             "2026-08-28T12:00:00Z",
@@ -684,5 +793,34 @@ mod tests {
         assert_eq!(line["data"]["type"], "log");
         assert_eq!(line["data"]["line"]["message"], "ready");
         assert!(!output[0].contains("canary-token"));
+    }
+
+    #[tokio::test]
+    async fn follow_logs_resolves_a_slug_before_opening_the_stream() {
+        let directory = tempfile::tempdir().unwrap();
+        let store = FakeStore::default();
+        let account = credential::account_for(&url::Url::parse("https://api.sproutos.me").unwrap());
+        store.set(&account, "canary-token").unwrap();
+        let backend = SlugFollowingBackend(Mutex::new(Vec::new()));
+        let stream = CapturedStream::default();
+        let cli = Cli::parse_from(["sprout", "--org", "acme", "logs", "project-1", "--follow"]);
+
+        let rendered = run(
+            &cli,
+            &Dependencies {
+                backend: &backend,
+                credentials: &store,
+                browser: &NeverBrowser,
+                confirmation: &Yes,
+                config_path: &directory.path().join("config.json"),
+                stream_output: &stream,
+            },
+        )
+        .await
+        .unwrap();
+
+        assert!(rendered.is_empty());
+        assert_eq!(backend.0.lock().unwrap().len(), 1);
+        assert_eq!(stream.0.lock().unwrap().len(), 1);
     }
 }

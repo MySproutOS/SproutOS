@@ -161,18 +161,7 @@ pub fn plan(
                     cursor,
                     limit,
                 },
-        }) => {
-            let mut path = org_path(org, "/projects")?;
-            add_query(
-                &mut path,
-                [
-                    ("repositoryId", repository_id.as_deref()),
-                    ("cursor", cursor.as_deref()),
-                    ("limit", Some(limit.to_string()).as_deref()),
-                ],
-            );
-            api(Method::Get, path, None)
-        }
+        }) => plan_project_list(org, repository_id.as_deref(), cursor.as_deref(), *limit)?,
         Command::Project(ProjectArgs {
             command: ProjectCommand::Get { project },
         }) => api(
@@ -464,24 +453,7 @@ pub fn plan(
             format!("{}/deployments/{}", org_path(org, "")?, segment(deployment)),
             None,
         ),
-        Command::Logs(args) => {
-            let mut path = format!(
-                "{}/projects/{}/logs{}",
-                org_path(org, "")?,
-                segment(&args.project),
-                if args.follow { "/follow" } else { "" }
-            );
-            add_query(
-                &mut path,
-                [
-                    ("since", args.since.as_deref()),
-                    ("search", args.search.as_deref()),
-                    ("level", args.level.as_deref()),
-                    ("limit", Some(args.limit.to_string()).as_deref()),
-                ],
-            );
-            api(Method::Get, path, None)
-        }
+        Command::Logs(args) => plan_logs(args, org, &args.project)?,
         Command::Android(AndroidArgs { command }) => {
             let (verb, project) = match command {
                 AndroidCommand::Setup { project } => ("setup", project),
@@ -540,6 +512,43 @@ pub fn plan(
         | Command::Template(_) => return Ok(None),
     };
     Ok(Some(request))
+}
+
+pub(crate) fn plan_project_list(
+    org: Option<&str>,
+    repository_id: Option<&str>,
+    cursor: Option<&str>,
+    limit: u16,
+) -> Result<ApiRequest> {
+    let mut path = org_path(org, "/projects")?;
+    add_query(
+        &mut path,
+        [
+            ("repositoryId", repository_id),
+            ("cursor", cursor),
+            ("limit", Some(limit.to_string()).as_deref()),
+        ],
+    );
+    Ok(api(Method::Get, path, None))
+}
+
+pub(crate) fn plan_logs(args: &LogsArgs, org: Option<&str>, project: &str) -> Result<ApiRequest> {
+    let mut path = format!(
+        "{}/projects/{}/logs{}",
+        org_path(org, "")?,
+        segment(project),
+        if args.follow { "/follow" } else { "" }
+    );
+    add_query(
+        &mut path,
+        [
+            ("since", args.since.as_deref()),
+            ("search", args.search.as_deref()),
+            ("level", args.level.as_deref()),
+            ("limit", Some(args.limit.to_string()).as_deref()),
+        ],
+    );
+    Ok(api(Method::Get, path, None))
 }
 
 fn api(method: Method, path: impl Into<String>, body: Option<Value>) -> ApiRequest {

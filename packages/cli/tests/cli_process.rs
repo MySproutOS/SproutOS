@@ -142,6 +142,68 @@ fn serve_once(body: Value) -> (String, mpsc::Receiver<String>) {
     (format!("http://{address}"), receiver)
 }
 
+fn serve_sequence(bodies: Vec<Value>) -> (String, mpsc::Receiver<Vec<String>>) {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let (sender, receiver) = mpsc::channel();
+    thread::spawn(move || {
+        let mut requests = Vec::new();
+        for body in bodies {
+            let (mut socket, _) = listener.accept().unwrap();
+            let mut request = [0_u8; 16 * 1024];
+            let length = socket.read(&mut request).unwrap();
+            requests.push(String::from_utf8_lossy(&request[..length]).into_owned());
+            let response = serde_json::to_vec(&body).unwrap();
+            write!(
+                socket,
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                response.len()
+            )
+            .unwrap();
+            socket.write_all(&response).unwrap();
+        }
+        let _ = sender.send(requests);
+    });
+    (format!("http://{address}"), receiver)
+}
+
+#[test]
+fn logs_resolves_a_project_slug_before_requesting_logs() {
+    let project_id = "01a03b96-a3d3-71f5-9f1d-af7569938433";
+    let (api_url, requests) = serve_sequence(vec![
+        json!({
+            "data": [{"id": project_id, "slug": "my-site"}],
+            "nextCursor": null
+        }),
+        json!({"lines": [], "nextBefore": null}),
+    ]);
+    let mut command = cargo_bin_cmd!("sprout");
+    command
+        .env("SPROUTOS_TOKEN", "logs-redaction-canary")
+        .args([
+            "--json",
+            "--org",
+            "acme",
+            "--api-url",
+            &api_url,
+            "logs",
+            "my-site",
+            "--limit",
+            "5",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""ok":true"#))
+        .stdout(predicate::str::contains("logs-redaction-canary").not());
+
+    let requests = requests.recv().unwrap();
+    assert_eq!(requests.len(), 2);
+    assert!(requests[0].starts_with("GET /v1/orgs/acme/projects?limit=100 "));
+    assert!(requests[1].starts_with(&format!(
+        "GET /v1/orgs/acme/projects/{project_id}/logs?limit=5 "
+    )));
+}
+
 #[test]
 fn json_validation_error_is_one_stdout_document() {
     let mut command = cargo_bin_cmd!("sprout");
@@ -468,7 +530,7 @@ fn log_transport_failure_does_not_leak_request_query_or_credentials() {
             "--api-url",
             &format!("http://{address}"),
             "logs",
-            "project-1",
+            "01a03b96-a3d3-71f5-9f1d-af7569938433",
             "--follow",
             "--search",
             "PRIVATE-SEARCH-CANARY",

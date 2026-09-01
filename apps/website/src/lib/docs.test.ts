@@ -76,7 +76,7 @@ describe("the documentation", () => {
     expect(text).toContain("thin wrapper around the published")
     expect(text).toContain("sprout deploy my-web-project")
     expect(text).toContain("deployment-templates")
-    expect(text).toContain("cli-v0.2.0")
+    expect(text).toContain("cli-v0.2.1")
     expect(text).toContain("0d5ce8bb74ecd598ae996c34d7d2cb5ac156a180")
     expect(text).toContain("c86dfdb7f055cb6cdf499b23f84ab91d640ca7a1")
     expect(text).not.toContain("sproutos-deploy-action@v1")

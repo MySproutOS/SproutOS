@@ -1,6 +1,6 @@
 [package]
 name = "sprout-cli"
-version = "0.2.0"
+version = "0.2.1"
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
@@ -31,6 +31,7 @@ sprout-core = { path = "../sprout-core" }
 thiserror.workspace = true
 tokio.workspace = true
 url = { version = "2.5", features = ["serde"] }
+uuid.workspace = true
 webbrowser = "1"
 zeroize = "1"
 

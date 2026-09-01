@@ -4509,7 +4509,7 @@ dependencies = [
 
 [[package]]
 name = "sprout-cli"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "assert_cmd",
  "async-trait",
@@ -4528,6 +4528,7 @@ dependencies = [
  "thiserror 2.0.20",
  "tokio",
  "url",
+ "uuid",
  "webbrowser",
  "zeroize",
 ]
