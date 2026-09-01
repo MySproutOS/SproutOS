@@ -147,6 +147,10 @@ import {
   type ReconcileDeploymentCatalogueInput,
 } from "./deploymentCatalogueImport/crud"
 import { fetchDeploymentCatalogueImport } from "./deploymentCatalogueImport/fetch"
+import { crudClientSignerJob } from "./clientSignerJob/crud"
+import { fetchClientSignerJob } from "./clientSignerJob/fetch"
+import { crudClientSigningIdentity } from "./clientSigningIdentity/crud"
+import { fetchClientSigningIdentity } from "./clientSigningIdentity/fetch"
 
 export {
   ADMIN_ROLE_NAME,
@@ -157,6 +161,10 @@ export {
   fetchDeploymentCatalogueImport,
   CatalogueListingInput,
   ReconcileDeploymentCatalogueInput,
+  crudClientSignerJob,
+  fetchClientSignerJob,
+  crudClientSigningIdentity,
+  fetchClientSigningIdentity,
   AgentConfigUpsert,
   AgentCredentialKind,
   AgentEventRow,

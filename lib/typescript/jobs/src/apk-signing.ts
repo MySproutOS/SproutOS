@@ -1,8 +1,11 @@
 import type { DB } from "@sproutos/db"
 import { sql, type Kysely, type Transaction } from "kysely"
+import { randomBytes } from "node:crypto"
 import { v7 } from "uuid"
 
-export const CLAIM_TIMEOUT_MS = 10 * 60 * 1000
+// A signer performs bounded downloads plus several bounded Android-tool invocations. Keep the
+// lease longer than their combined worst case so a valid slow job cannot be stolen mid-signing.
+export const CLAIM_TIMEOUT_MS = 30 * 60 * 1000
 export const APK_MIME = "application/vnd.android.package-archive"
 export const ANDROID_VERSION_CODE_MAX = 2_100_000_000
 
@@ -25,7 +28,13 @@ export function packageNameForProject(projectId: string): string {
 
 type JobDb = Kysely<DB> | Transaction<DB>
 export type SigningJob =
-  | { id: string; kind: "provision_key"; androidAppId: string; packageName: string }
+  | {
+      id: string
+      kind: "provision_key"
+      androidAppId: string
+      packageName: string
+      claimToken: string
+    }
   | {
       id: string
       kind: "sign_release"
@@ -40,6 +49,7 @@ export type SigningJob =
       certificateSha256: string
       keyObjectKey: string
       keyObjectVersion: string
+      claimToken: string
     }
 
 async function ensureApp(db: JobDb, projectId: string) {
@@ -77,7 +87,9 @@ async function ensureProvisionJob(db: JobDb, androidAppId: string): Promise<void
       error: null,
       claimedBy: null,
       claimedAt: null,
+      claimToken: null,
       callbackIdempotencyKey: null,
+      callbackClaimToken: null,
       updatedAt: new Date(),
     })
     .where("androidAppId", "=", androidAppId)
@@ -355,9 +367,11 @@ export async function claimSigningJob(
   db: Kysely<DB>,
   signerId: string,
   now: () => Date = () => new Date(),
+  token: () => string = () => randomBytes(32).toString("hex"),
 ): Promise<SigningJob | undefined> {
   const claimedAt = now()
   const staleBefore = new Date(claimedAt.getTime() - CLAIM_TIMEOUT_MS)
+  const claimToken = token()
   const claim = await db
     .with("candidate", (qb) =>
       qb
@@ -396,7 +410,7 @@ export async function claimSigningJob(
       state: "running",
       claimedBy: signerId,
       claimedAt,
-      callbackIdempotencyKey: null,
+      claimToken,
       updatedAt: claimedAt,
     })
     .whereRef("androidSignerJob.id", "=", "candidate.id")
@@ -430,6 +444,7 @@ export async function claimSigningJob(
       kind: "provision_key",
       androidAppId: row.androidAppId,
       packageName: row.packageName,
+      claimToken,
     }
   }
   if (
@@ -457,6 +472,7 @@ export async function claimSigningJob(
     certificateSha256: row.certificateSha256,
     keyObjectKey: row.keyObjectKey,
     keyObjectVersion: row.keyObjectVersion,
+    claimToken,
   }
 }
 
@@ -465,6 +481,7 @@ export async function completeKeyProvision(
   input: {
     jobId: string
     signerId: string
+    claimToken: string
     keyObjectKey: string
     keyObjectVersion: string
     certificateSha256: string
@@ -475,12 +492,13 @@ export async function completeKeyProvision(
   return await db.transaction().execute(async (trx) => {
     const held = await trx
       .selectFrom("androidSignerJob")
-      .select(["androidAppId", "callbackIdempotencyKey"])
+      .select(["androidAppId", "callbackIdempotencyKey", "callbackClaimToken"])
       .where("id", "=", input.jobId)
       .where("kind", "=", "provision_key")
       .forUpdate()
       .executeTakeFirst()
-    if (held?.callbackIdempotencyKey === input.idempotencyKey) return true
+    if (held?.callbackIdempotencyKey === input.idempotencyKey)
+      return held.callbackClaimToken === input.claimToken
     if (
       held === undefined ||
       input.keyObjectKey !== `keys/${held.androidAppId}/signing.keystore.enc`
@@ -491,7 +509,9 @@ export async function completeKeyProvision(
       .updateTable("androidSignerJob")
       .set({
         state: "succeeded",
+        claimToken: null,
         callbackIdempotencyKey: input.idempotencyKey,
+        callbackClaimToken: input.claimToken,
         signedAt: new Date(),
         updatedAt: new Date(),
       })
@@ -499,6 +519,7 @@ export async function completeKeyProvision(
       .where("kind", "=", "provision_key")
       .where("state", "=", "running")
       .where("claimedBy", "=", input.signerId)
+      .where("claimToken", "=", input.claimToken)
       .returning("androidAppId")
       .executeTakeFirst()
     if (job === undefined) return false
@@ -529,6 +550,7 @@ export async function completeSigning(
   input: {
     jobId: string
     signerId: string
+    claimToken: string
     signedKey: string
     signedObjectVersion: string
     signedDigest: string
@@ -550,7 +572,9 @@ export async function completeSigning(
         "androidSignerJob.versionCode",
         "androidSignerJob.state",
         "androidSignerJob.claimedBy",
+        "androidSignerJob.claimToken",
         "androidSignerJob.callbackIdempotencyKey",
+        "androidSignerJob.callbackClaimToken",
         "androidApp.packageName",
         "androidApp.certificateSha256",
         "androidApp.lastAcceptedVersionCode",
@@ -561,11 +585,13 @@ export async function completeSigning(
       .where("androidSignerJob.kind", "=", "sign_release")
       .forUpdate()
       .executeTakeFirst()
-    if (job?.callbackIdempotencyKey === input.idempotencyKey) return true
+    if (job?.callbackIdempotencyKey === input.idempotencyKey)
+      return job.callbackClaimToken === input.claimToken
     if (
       job === undefined ||
       job.state !== "running" ||
       job.claimedBy !== input.signerId ||
+      job.claimToken !== input.claimToken ||
       job.deploymentId === null ||
       job.versionCode !== input.versionCode ||
       job.packageName !== input.packageName ||
@@ -579,12 +605,14 @@ export async function completeSigning(
       .updateTable("androidSignerJob")
       .set({
         state: "succeeded",
+        claimToken: null,
         signedKey: input.signedKey,
         signedObjectVersion: input.signedObjectVersion,
         signedDigest: input.signedDigest,
         signedSizeBytes: input.signedSizeBytes,
         versionName: input.versionName,
         callbackIdempotencyKey: input.idempotencyKey,
+        callbackClaimToken: input.claimToken,
         signedAt: new Date(),
         updatedAt: new Date(),
       })
@@ -610,6 +638,7 @@ export async function failSigning(
   input: {
     jobId: string
     signerId: string
+    claimToken: string
     error: string
     developerConsoleState?: "ownership_required" | "failed"
     maxAttempts?: number
@@ -619,11 +648,19 @@ export async function failSigning(
   return await db.transaction().execute(async (trx) => {
     const job = await trx
       .selectFrom("androidSignerJob")
-      .select(["androidAppId", "attempts", "deploymentId", "kind", "callbackIdempotencyKey"])
+      .select([
+        "androidAppId",
+        "attempts",
+        "deploymentId",
+        "kind",
+        "callbackIdempotencyKey",
+        "callbackClaimToken",
+      ])
       .where("id", "=", input.jobId)
       .forUpdate()
       .executeTakeFirst()
-    if (job?.callbackIdempotencyKey === input.idempotencyKey) return true
+    if (job?.callbackIdempotencyKey === input.idempotencyKey)
+      return job.callbackClaimToken === input.claimToken
     if (job === undefined) return false
     const held = await trx
       .selectFrom("androidSignerJob")
@@ -631,6 +668,7 @@ export async function failSigning(
       .where("id", "=", input.jobId)
       .where("state", "=", "running")
       .where("claimedBy", "=", input.signerId)
+      .where("claimToken", "=", input.claimToken)
       .executeTakeFirst()
     if (held === undefined) return false
     const attempts = job.attempts + 1
@@ -643,7 +681,9 @@ export async function failSigning(
         error: input.error.slice(0, 2000),
         claimedBy: null,
         claimedAt: null,
+        claimToken: null,
         callbackIdempotencyKey: input.idempotencyKey,
+        callbackClaimToken: input.claimToken,
         updatedAt: new Date(),
       })
       .where("id", "=", input.jobId)

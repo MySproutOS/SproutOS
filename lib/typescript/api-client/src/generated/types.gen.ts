@@ -7807,6 +7807,27 @@ export type PostV1ApkSigningCompleteData = {
         version_name: string
         certificate_sha256: string
       }
+    | {
+        job_id: string
+        signer_id: string
+        kind: "provision_client_key"
+        encrypted_key_object_key: "keys/client/signing.keystore.enc"
+        encrypted_key_object_version: string
+        certificate_sha256: string
+      }
+    | {
+        job_id: string
+        signer_id: string
+        kind: "sign_client_release"
+        signed_key: string
+        signed_object_version: string
+        signed_digest: string
+        size_bytes: number
+        package_name: "com.sproutos.store"
+        version_code: number
+        version_name: string
+        certificate_sha256: string
+      }
   path?: never
   query?: never
   url: "/v1/apk-signing/complete"
