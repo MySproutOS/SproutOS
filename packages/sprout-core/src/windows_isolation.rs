@@ -80,6 +80,18 @@ impl WindowsAppContainerCommand {
                 source,
             });
         }
+        // The AppContainer must be able to traverse every component leading to its staged
+        // workspace. On hosted Windows runners the profile directory is created by this host
+        // process, so it does not yet carry an ACE for the newly registered package SID.
+        if let Err(error) = rappct::acl::grant_to_package(
+            rappct::acl::ResourcePath::Directory(profile_folder.clone()),
+            &profile.sid,
+            rappct::acl::AccessMask(FILE_GENERIC_READ_EXECUTE),
+        ) {
+            let message = error.to_string();
+            let _ = profile.delete();
+            return Err(SproutError::IsolationUnavailable(message));
+        }
         let temporary = match tempfile::Builder::new()
             .prefix("sprout-stage-")
             .tempdir_in(profile_folder)
@@ -448,6 +460,7 @@ mod tests {
 fn main() {{
  if std::env::args().nth(1).as_deref()==Some("child") {{ std::thread::sleep(std::time::Duration::from_secs(2)); let _=std::fs::write("descendant",b"bad"); return; }}
  let mut input=Vec::new(); std::io::stdin().read_to_end(&mut input).unwrap();
+ std::env::current_dir().unwrap().canonicalize().unwrap();
  if input==b"slow" {{ std::process::Command::new(std::env::current_exe().unwrap()).arg("child").spawn().unwrap(); std::thread::sleep(std::time::Duration::from_secs(10)); return; }}
  std::fs::write("allowed", b"ok").unwrap();
  if std::fs::read({credential_literal}).is_ok() {{ std::process::exit(10); }}
