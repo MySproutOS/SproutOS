@@ -69,7 +69,7 @@ impl CosignProvenanceVerifier {
         }
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, unix))]
     fn for_test(cosign: PathBuf, github_cli: PathBuf, timeout: Duration) -> Self {
         Self {
             cosign,

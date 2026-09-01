@@ -153,7 +153,7 @@ impl VerifiedExecutable {
         &self.manifest_digest
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, unix))]
     pub(crate) fn for_test(path: PathBuf) -> Self {
         Self {
             path,
