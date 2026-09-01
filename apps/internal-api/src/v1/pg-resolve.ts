@@ -91,6 +91,17 @@ const pgResolve: Hono = new Hono().post(
         "databaseBranch.host",
       ])
       .where("databaseInstance.backendServiceId", "=", backend_service_id)
+      /*
+        Shared Sprout databases are handled by pg-proxy's configured backend.
+
+        Returning their local `database_branch.host` here makes the resolver reinterpret that
+        shared backend as a managed remote endpoint. Resolved endpoints require TLS, so the local
+        shared cluster is then rejected even though the proxy's configured backend correctly has
+        TLS disabled. More importantly, production would route a legacy Sprout database through
+        the wrong configuration path. A 404 is the resolver contract for "use the configured
+        backend", and only Neon has per-tenant connection details to resolve.
+      */
+      .where("databaseInstance.provider", "=", "neon")
       .where("databaseInstance.deletedAt", "is", null)
       /*
         The named branch, or the primary.
