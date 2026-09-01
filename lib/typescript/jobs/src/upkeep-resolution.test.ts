@@ -221,7 +221,7 @@ describe.skipIf(!reachable)("resolveUpkeepConflict", () => {
       outcome: "pr_opened",
       pullRequestNumber: 41,
       pullRequestUrl: "https://github.com/customer/app/pull/41",
-      forkSha: seeded.targetSha,
+      forkSha: "3".repeat(40),
       upstreamSha: seeded.upstreamSha,
     })
   })

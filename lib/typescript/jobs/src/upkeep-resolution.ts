@@ -192,7 +192,10 @@ export function resolveUpkeepConflict(deps?: UpkeepResolutionDeps): JobHandler {
         branch: updateBranch,
         outcome: "pr_opened",
         upstreamSha: details.expectedUpstreamSha,
-        forkSha: details.expectedTargetSha,
+        // The PR finalizer pins the exact proposal head before merging. A conflict resolution
+        // creates a new commit, so recording the pre-resolution target head makes the finalizer
+        // correctly reject every resolver-created PR as a changed-head race.
+        forkSha: result.proposedSha,
         mergeType: "merge",
         pullRequestNumber: result.pullRequestNumber,
         pullRequestUrl: result.pullRequestUrl,
