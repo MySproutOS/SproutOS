@@ -175,6 +175,7 @@ import {
   postV1OrgsByOrgSlugStoreListingsByListingIdUnpublish,
   postV1OrgsByOrgSlugTransferOwnership,
   postV1StoreListingsBySlugEvents,
+  postV1TemplatesResolve,
   postV1WebhooksGithub,
   postV1WebhooksStripe,
   putV1OrgsByOrgSlugAgentConfig,
@@ -640,6 +641,9 @@ import type {
   PostV1StoreListingsBySlugEventsData,
   PostV1StoreListingsBySlugEventsError,
   PostV1StoreListingsBySlugEventsResponse,
+  PostV1TemplatesResolveData,
+  PostV1TemplatesResolveError,
+  PostV1TemplatesResolveResponse,
   PostV1WebhooksGithubData,
   PostV1WebhooksGithubError,
   PostV1WebhooksGithubResponse,
@@ -5234,6 +5238,33 @@ export const postV1StoreListingsBySlugEventsMutation = (
   > = {
     mutationFn: async (fnOptions) => {
       const { data } = await postV1StoreListingsBySlugEvents({
+        ...options,
+        ...fnOptions,
+        throwOnError: true,
+      })
+      return data
+    },
+  }
+  return mutationOptions
+}
+
+/**
+ * Resolves one exact upstream commit from the signed deployment catalogue
+ */
+export const postV1TemplatesResolveMutation = (
+  options?: Partial<Options<PostV1TemplatesResolveData>>,
+): UseMutationOptions<
+  PostV1TemplatesResolveResponse,
+  PostV1TemplatesResolveError,
+  Options<PostV1TemplatesResolveData>
+> => {
+  const mutationOptions: UseMutationOptions<
+    PostV1TemplatesResolveResponse,
+    PostV1TemplatesResolveError,
+    Options<PostV1TemplatesResolveData>
+  > = {
+    mutationFn: async (fnOptions) => {
+      const { data } = await postV1TemplatesResolve({
         ...options,
         ...fnOptions,
         throwOnError: true,

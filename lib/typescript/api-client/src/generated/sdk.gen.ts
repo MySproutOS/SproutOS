@@ -563,6 +563,9 @@ import type {
   PostV1StoreListingsBySlugEventsData,
   PostV1StoreListingsBySlugEventsErrors,
   PostV1StoreListingsBySlugEventsResponses,
+  PostV1TemplatesResolveData,
+  PostV1TemplatesResolveErrors,
+  PostV1TemplatesResolveResponses,
   PostV1WebhooksGithubData,
   PostV1WebhooksGithubErrors,
   PostV1WebhooksGithubResponses,
@@ -3511,6 +3514,25 @@ export const postV1StoreListingsBySlugEvents = <ThrowOnError extends boolean = f
     headers: {
       "Content-Type": "application/json",
       ...options.headers,
+    },
+  })
+
+/**
+ * Resolves one exact upstream commit from the signed deployment catalogue
+ */
+export const postV1TemplatesResolve = <ThrowOnError extends boolean = false>(
+  options?: Options<PostV1TemplatesResolveData, ThrowOnError>,
+): RequestResult<PostV1TemplatesResolveResponses, PostV1TemplatesResolveErrors, ThrowOnError> =>
+  (options?.client ?? client).post<
+    PostV1TemplatesResolveResponses,
+    PostV1TemplatesResolveErrors,
+    ThrowOnError
+  >({
+    url: "/v1/templates/resolve",
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options?.headers,
     },
   })
 

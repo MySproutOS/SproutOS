@@ -140,7 +140,16 @@ describe.runIf(reachable)("the catalogue-client signing schema", () => {
       "client_signing_identity",
       "client_signing_identity_registered_identity_check",
     )
-    expect(identity).toContain("developer_console_account IS NOT NULL")
+    expect(identity).not.toContain("developer_console_account")
     expect(identity).toContain("developer_console_provider_state IS DISTINCT FROM 'REGISTERED'")
+
+    const deprecatedColumn = await sql<{ isNullable: string }>`
+      select is_nullable
+      from information_schema.columns
+      where table_schema = current_schema()
+        and table_name = 'client_signing_identity'
+        and column_name = 'developer_console_account'
+    `.execute(db)
+    expect(deprecatedColumn.rows).toEqual([{ isNullable: "YES" }])
   })
 })

@@ -106,13 +106,6 @@ pub struct SignClientReleaseJob {
     pub signed_key: String,
 }
 
-#[derive(Debug, Clone, Copy, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum DeveloperConsoleState {
-    PendingRegistration,
-    Registered,
-}
-
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum CompleteRequest {
@@ -123,7 +116,6 @@ pub enum CompleteRequest {
         encrypted_key_object_key: String,
         encrypted_key_object_version: String,
         certificate_sha256: String,
-        developer_console_state: DeveloperConsoleState,
     },
     SignRelease {
         job_id: String,
@@ -137,7 +129,6 @@ pub enum CompleteRequest {
         version_code: u64,
         version_name: String,
         certificate_sha256: String,
-        developer_console_account: String,
     },
     ProvisionClientKey {
         job_id: String,
@@ -159,7 +150,6 @@ pub enum CompleteRequest {
         version_code: u64,
         version_name: String,
         certificate_sha256: String,
-        developer_console_account: String,
     },
 }
 
@@ -194,6 +184,9 @@ struct FinalizeClientUploadRequest<'a> {
 pub struct ClientIdentityStatus {
     pub package_name: String,
     pub state: String,
+    pub registration_state: String,
+    pub registration_provider_state: Option<String>,
+    pub registration_error: Option<String>,
     pub certificate_sha256: Option<String>,
 }
 
@@ -671,7 +664,6 @@ mod tests {
             version_code: 2,
             version_name: "2.0".into(),
             certificate_sha256: "c".repeat(64),
-            developer_console_account: "developerAccounts/123".into(),
         }
     }
 
@@ -846,7 +838,6 @@ mod tests {
             version_code: 2,
             version_name: "0.2.0".into(),
             certificate_sha256: "c".repeat(64),
-            developer_console_account: "developerAccounts/123".into(),
         };
         let fail = FailRequest {
             job_id,
@@ -862,7 +853,7 @@ mod tests {
             ),
             (
                 serde_json::to_string(&complete).unwrap(),
-                "bcde482511c29bca8a009add26dfbba0a994b551191b2f386a3401a7c4ec4646",
+                "abe688315673815c1780f9020615d0bd2aaf6fa472e30df830fe6fa0f4aae167",
             ),
             (
                 serde_json::to_string(&fail).unwrap(),

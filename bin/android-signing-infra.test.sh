@@ -104,9 +104,9 @@ done
 reject 'ANDROID_DEVELOPER_ID_STATUS_API_KEY' <(printf '%s\n' "$LEGACY_USER_DATA") \
   'the worker-only Google key must not be requested by legacy instance bootstrap'
 require 'ANDROID_DEVELOPER_ID_STATUS_API_KEY' <(printf '%s\n' "$ANDROID_WORKER_PARAMETERS") \
-  'the Android Developer Console credential must reach only the worker'
+  'the Android Developer ID Status API key must reach only the worker'
 reject 'ANDROID_DEVELOPER_ID_STATUS_API_KEY' <(printf '%s\n' "$API_PARAMETERS$WEBSITE_PARAMETERS") \
-  'the Android Developer Console credential must not reach the API or website'
+  'the Android Developer ID Status API key must not reach the API or website'
 reject 'ecs_worker_parameter_names' <(printf '%s\n' "$ACME_PARAMETERS") \
   'the ACME task must not inherit the ordinary worker secret list'
 require 'var.android_custody_delivery_enabled[[:space:]]*\?' "$ECS_TF" \

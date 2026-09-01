@@ -25,10 +25,7 @@ const created: { table: "project" | "repository" | "organization" | "user"; id: 
 const projectIds: string[] = []
 const CONFIG_FINGERPRINT = "f".repeat(64)
 
-async function seedApp(
-  certificate = "a".repeat(64),
-  developerConsoleAccount: string | null = "developerAccounts/123",
-) {
+async function seedApp(certificate: string | null = "a".repeat(64)) {
   const userId = v7()
   const organizationId = v7()
   const repositoryId = v7()
@@ -83,7 +80,6 @@ async function seedApp(
       certificateSha256: certificate,
       keyObjectKey: `keys/${projectId}/signing.keystore.enc`,
       keyObjectVersion: "v1",
-      developerConsoleAccount,
       developerConsoleState: "pending_registration",
       developerConsoleNextCheckAt: new Date("2026-01-01T00:00:00.000Z"),
     })
@@ -171,8 +167,8 @@ describe("Google Android Developer ID status client", () => {
 })
 
 describe.runIf(reachable)("durable Android registration reconciliation", () => {
-  it("does not spend status quota before the signer records the owning developer account", async () => {
-    const appId = await seedApp("9".repeat(64), null)
+  it("does not spend status quota before the signer records a certificate", async () => {
+    const appId = await seedApp(null)
     let checked = false
     const result = await reconcileAndroidDeveloperRegistrations(
       db,

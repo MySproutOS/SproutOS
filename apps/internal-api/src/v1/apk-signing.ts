@@ -28,7 +28,11 @@ import { Type } from "typebox"
 import { validator } from "../utils/validator"
 
 const digest = Type.String({ pattern: "^[0-9a-f]{64}$" })
-const developerAccount = Type.String({ pattern: "^developerAccounts/[0-9]+$" })
+const MAX_REGISTRATION_ERROR_CHARACTERS = 2000
+
+export function boundedRegistrationError(error: string): string {
+  return error.slice(0, MAX_REGISTRATION_ERROR_CHARACTERS)
+}
 const claimRequest = Type.Object({ signer_id: Type.String({ minLength: 1, maxLength: 200 }) })
 const provisionClaimResponse = Type.Object({
   job_id: Type.String({ format: "uuid" }),
@@ -99,7 +103,6 @@ const provisionComplete = Type.Object({
   encrypted_key_object_key: Type.String({ minLength: 1 }),
   encrypted_key_object_version: Type.String({ minLength: 1 }),
   certificate_sha256: digest,
-  developer_console_state: Type.Literal("pending_registration"),
 })
 const signComplete = Type.Object({
   job_id: Type.String({ format: "uuid" }),
@@ -114,7 +117,6 @@ const signComplete = Type.Object({
   version_code: Type.Integer({ minimum: 1 }),
   version_name: Type.String({ minLength: 1, maxLength: 255 }),
   certificate_sha256: digest,
-  developer_console_account: developerAccount,
 })
 const provisionClientComplete = Type.Object({
   job_id: Type.String({ format: "uuid" }),
@@ -138,7 +140,6 @@ const signClientComplete = Type.Object({
   version_code: Type.Integer({ minimum: 1, maximum: 2_100_000_000 }),
   version_name: Type.String({ minLength: 1, maxLength: 100 }),
   certificate_sha256: digest,
-  developer_console_account: developerAccount,
 })
 const completeRequest = Type.Union([
   provisionComplete,
@@ -151,9 +152,6 @@ const failRequest = Type.Object({
   signer_id: Type.String({ minLength: 1, maxLength: 200 }),
   claim_token: digest,
   error: Type.String({ minLength: 1, maxLength: 4000 }),
-  developer_console_state: Type.Optional(
-    Type.Union([Type.Literal("ownership_required"), Type.Literal("failed")]),
-  ),
 })
 
 const clientIdentityRequest = Type.Object({
@@ -401,16 +399,13 @@ const app: Hono = new Hono()
       return c.json({
         package_name: identity.packageName,
         state: identity.state,
-        developer_console_state: identity.developerConsoleState,
+        registration_state: identity.developerConsoleState,
         ...(identity.developerConsoleProviderState === null
           ? {}
-          : { developer_console_provider_state: identity.developerConsoleProviderState }),
+          : { registration_provider_state: identity.developerConsoleProviderState }),
         ...(identity.developerConsoleError === null
           ? {}
-          : { developer_console_error: identity.developerConsoleError }),
-        ...(identity.developerConsoleAccount === null
-          ? {}
-          : { developer_console_account: identity.developerConsoleAccount }),
+          : { registration_error: boundedRegistrationError(identity.developerConsoleError) }),
         ...(identity.certificateSha256 === null
           ? {}
           : { certificate_sha256: identity.certificateSha256 }),
@@ -576,7 +571,6 @@ const app: Hono = new Hono()
           keyObjectKey: json.encrypted_key_object_key,
           keyObjectVersion: json.encrypted_key_object_version,
           certificateSha256: json.certificate_sha256,
-          developerConsoleState: json.developer_console_state,
           idempotencyKey,
         })
       } else if (json.kind === "sign_release") {
@@ -592,7 +586,6 @@ const app: Hono = new Hono()
           versionCode: json.version_code,
           versionName: json.version_name,
           certificateSha256: json.certificate_sha256,
-          developerConsoleAccount: json.developer_console_account,
           idempotencyKey,
         })
       } else if (json.kind === "provision_client_key") {
@@ -618,7 +611,6 @@ const app: Hono = new Hono()
           versionCode: json.version_code,
           versionName: json.version_name,
           certificateSha256: json.certificate_sha256,
-          developerConsoleAccount: json.developer_console_account,
           idempotencyKey,
         })
       }
@@ -651,7 +643,6 @@ const app: Hono = new Hono()
         signerId: json.signer_id,
         claimToken: json.claim_token,
         error: json.error,
-        developerConsoleState: json.developer_console_state,
         idempotencyKey,
       })
       const recorded =

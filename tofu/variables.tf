@@ -472,7 +472,7 @@ variable "android_custody_delivery_enabled" {
 }
 
 variable "android_developer_registration_delivery_enabled" {
-  description = "Inject the independent Android Developer Console API credential into only the worker after its own preflight and rollout are ready."
+  description = "Inject the independent Android Developer ID Status API key into only the worker after its own preflight and rollout are ready."
   type        = bool
   default     = false
 }

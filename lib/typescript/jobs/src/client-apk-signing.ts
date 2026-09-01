@@ -104,7 +104,6 @@ export async function ensureClientSigningIdentity(db: Kysely<DB>, operatorSigner
       .selectFrom("clientSigningIdentity")
       .select(["packageName", "state", "certificateSha256"])
       .select(["developerConsoleState", "developerConsoleProviderState", "developerConsoleError"])
-      .select("developerConsoleAccount")
       .where("id", "=", identity.id)
       .executeTakeFirstOrThrow()
   })
@@ -527,7 +526,6 @@ export async function completeClientSigning(
     versionCode: number
     versionName: string
     certificateSha256: string
-    developerConsoleAccount: string
     idempotencyKey: string
   },
 ): Promise<boolean> {
@@ -558,7 +556,6 @@ export async function completeClientSigning(
         "clientSigningIdentity.certificateSha256",
         "clientSigningIdentity.developerConsoleState",
         "clientSigningIdentity.developerConsoleProviderState",
-        "clientSigningIdentity.developerConsoleAccount",
       ])
       .where("clientSignerJob.id", "=", input.jobId)
       .where("clientSignerJob.kind", "=", "sign_client_release")
@@ -576,8 +573,7 @@ export async function completeClientSigning(
         job.versionName === input.versionName &&
         job.versionCode === input.versionCode &&
         job.packageName === input.packageName &&
-        job.certificateSha256 === input.certificateSha256 &&
-        job.developerConsoleAccount === input.developerConsoleAccount
+        job.certificateSha256 === input.certificateSha256
       )
     }
     if (
@@ -588,8 +584,6 @@ export async function completeClientSigning(
       job.versionCode !== input.versionCode ||
       job.packageName !== input.packageName ||
       job.certificateSha256 !== input.certificateSha256 ||
-      (job.developerConsoleAccount !== null &&
-        job.developerConsoleAccount !== input.developerConsoleAccount) ||
       input.signedKey !== `signed/client/${input.jobId}.apk`
     )
       return false
@@ -642,18 +636,13 @@ export async function completeClientSigning(
       })
       .where("id", "=", input.jobId)
       .execute()
-    await trx
-      .updateTable("clientSigningIdentity")
-      .set({ developerConsoleAccount: input.developerConsoleAccount, updatedAt: now })
-      .where("id", "=", job.clientSigningIdentityId)
-      .execute()
     return true
   })
 }
 
 /**
  * Record only public provider status and release signed client artifacts after independent proof.
- * OAuth credentials and ownership tokens never cross this boundary.
+ * The Status API key is the only provider credential at this boundary.
  */
 export async function reconcileClientDeveloperRegistration(
   db: Kysely<DB>,
@@ -663,16 +652,11 @@ export async function reconcileClientDeveloperRegistration(
   await db.transaction().execute(async (trx) => {
     const identity = await trx
       .selectFrom("clientSigningIdentity")
-      .select(["id", "certificateSha256", "developerConsoleAccount"])
+      .select(["id", "certificateSha256"])
       .where("packageName", "=", CLIENT_PACKAGE_NAME)
       .forUpdate()
       .executeTakeFirst()
-    if (
-      identity === undefined ||
-      identity.certificateSha256 === null ||
-      identity.developerConsoleAccount === null
-    )
-      return
+    if (identity === undefined || identity.certificateSha256 === null) return
     const certificateSha256 = identity.certificateSha256
     const registered = providerState === "REGISTERED"
     const wrongCertificate = providerState === "REGISTERED_WITH_ANOTHER_CERTIFICATE_FINGERPRINT"

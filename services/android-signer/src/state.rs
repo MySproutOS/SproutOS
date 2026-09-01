@@ -27,7 +27,6 @@ pub struct SignCheckpoint {
     pub unsigned_digest: String,
     pub encrypted_key_object_key: String,
     pub encrypted_key_object_version: String,
-    pub developer_console_account: String,
     pub signed_key: String,
     pub signed_digest: String,
     pub size_bytes: u64,
@@ -74,7 +73,6 @@ impl SignCheckpoint {
             version_code: self.version_code,
             version_name: self.version_name.clone(),
             certificate_sha256: self.certificate_sha256.clone(),
-            developer_console_account: self.developer_console_account.clone(),
         }
     }
 }
@@ -282,7 +280,6 @@ mod tests {
             unsigned_digest: job.unsigned_digest.clone(),
             encrypted_key_object_key: job.encrypted_key_object_key.clone(),
             encrypted_key_object_version: job.encrypted_key_object_version.clone(),
-            developer_console_account: "developerAccounts/123".into(),
             signed_key: job.signed_key.clone(),
             signed_digest: crate::apk::sha256_file(&signed_apk).unwrap(),
             size_bytes: 12,
@@ -291,5 +288,29 @@ mod tests {
         checkpoint.assert_matches(&job).unwrap();
         job.encrypted_key_object_version = "different-version".into();
         assert!(checkpoint.assert_matches(&job).is_err());
+    }
+
+    #[test]
+    fn legacy_sign_checkpoint_ignores_removed_developer_account() {
+        let checkpoint: SignCheckpoint = serde_json::from_value(serde_json::json!({
+            "android_app_id": "019d0000-0000-7000-8000-000000000001",
+            "project_id": "platform",
+            "deployment_id": "platform",
+            "package_name": "com.sproutos.store",
+            "version_code": 2,
+            "version_name": "1.0",
+            "certificate_sha256": "a".repeat(64),
+            "developer_console_account": "developerAccounts/123",
+            "unsigned_digest": "b".repeat(64),
+            "encrypted_key_object_key": "keys/client/signing.keystore.enc",
+            "encrypted_key_object_version": "key-version",
+            "signed_key": "signed/client/job.apk",
+            "signed_digest": "c".repeat(64),
+            "size_bytes": 12
+        }))
+        .unwrap();
+
+        assert_eq!(checkpoint.package_name, "com.sproutos.store");
+        assert_eq!(checkpoint.certificate_sha256, "a".repeat(64));
     }
 }
