@@ -1,10 +1,58 @@
 import { describe, expect, it } from "vitest"
-import { GitHubNotFoundError } from "@lib/github"
+import { createGitHubClient, GitHubNotFoundError, installationToken } from "@lib/github"
 import {
   availableInstallationResults,
+  checkManualUpstreamAccess,
   mergeInstallationRepositoryPages,
   repositoryNameProblem,
 } from "./github-repos"
+
+describe("checkManualUpstreamAccess", () => {
+  const credential = installationToken("ghs_test", 42, new Date(Date.now() + 60_000))
+
+  function clientFor(id: number) {
+    return createGitHubClient({
+      fetch: () =>
+        Promise.resolve(
+          new Response(
+            JSON.stringify({
+              id,
+              node_id: `R_${id}`,
+              name: "upstream",
+              full_name: "source/upstream",
+              owner: { login: "source", type: "Organization" },
+              private: false,
+              fork: false,
+              default_branch: "main",
+              html_url: "https://github.com/source/upstream",
+              clone_url: "https://github.com/source/upstream.git",
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          ),
+        ),
+    })
+  }
+
+  it("confirms an accessible upstream and reports its default branch", async () => {
+    await expect(
+      checkManualUpstreamAccess(clientFor(99), credential, 42, "source/upstream"),
+    ).resolves.toEqual({
+      fullName: "source/upstream",
+      accessible: true,
+      defaultBranch: "main",
+      reason: null,
+    })
+  })
+
+  it("rejects selecting the repository itself as its upstream", async () => {
+    await expect(
+      checkManualUpstreamAccess(clientFor(42), credential, 42, "source/upstream"),
+    ).resolves.toMatchObject({
+      accessible: false,
+      reason: "A repository cannot be its own upstream.",
+    })
+  })
+})
 
 describe("mergeInstallationRepositoryPages", () => {
   it("includes repositories from every connected installation and de-duplicates by GitHub id", () => {
@@ -41,7 +89,7 @@ describe("mergeInstallationRepositoryPages", () => {
     ])
 
     expect(result.repositories.map((repository) => repository.id)).toEqual([42, 99])
-    expect(result.totalCount).toBe(3)
+    expect(result.totalCount).toBe(2)
   })
 })
 

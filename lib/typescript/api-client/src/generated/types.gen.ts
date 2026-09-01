@@ -1813,6 +1813,58 @@ export type GetV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdResponses = {
 export type GetV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdResponse =
   GetV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdResponses[keyof GetV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdResponses]
 
+export type PostV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdRetryData = {
+  body?: never
+  path: {
+    orgSlug: string
+    projectId: string
+    jobId: string
+  }
+  query?: never
+  url: "/v1/orgs/{orgSlug}/projects/{projectId}/jobs/{jobId}/retry"
+}
+
+export type PostV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdRetryErrors = {
+  /**
+   * The job cannot be retried safely
+   */
+  400: ErrorResponseT
+  /**
+   * Caller lacks project:update
+   */
+  403: ErrorResponseT
+}
+
+export type PostV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdRetryError =
+  PostV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdRetryErrors[keyof PostV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdRetryErrors]
+
+export type PostV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdRetryResponses = {
+  /**
+   * The queued or already-running provisioning job
+   */
+  200: {
+    id: string
+    projectId: string
+    kind: string
+    state: string
+    progress: number
+    attempt: number
+    errorCode: string | null
+    errorMessage: string | null
+    steps: Array<{
+      key: string
+      label: string
+      state: string
+    }>
+    startedAt: Date | null
+    finishedAt: Date | null
+    createdAt: Date
+  }
+}
+
+export type PostV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdRetryResponse =
+  PostV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdRetryResponses[keyof PostV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdRetryResponses]
+
 export type PostV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdCancelData = {
   body?: never
   path: {
@@ -3039,6 +3091,51 @@ export type GetV1OrgsByOrgSlugGithubRepositoriesResponses = {
 
 export type GetV1OrgsByOrgSlugGithubRepositoriesResponse =
   GetV1OrgsByOrgSlugGithubRepositoriesResponses[keyof GetV1OrgsByOrgSlugGithubRepositoriesResponses]
+
+export type GetV1OrgsByOrgSlugGithubUpstreamRepositoryData = {
+  body?: never
+  path: {
+    orgSlug: string
+  }
+  query: {
+    fullName: string
+    githubRepoId: string
+  }
+  url: "/v1/orgs/{orgSlug}/github/upstream-repository"
+}
+
+export type GetV1OrgsByOrgSlugGithubUpstreamRepositoryErrors = {
+  /**
+   * Caller lacks github:read
+   */
+  403: ErrorResponseT
+  /**
+   * GitHub rate limit reached
+   */
+  429: ErrorResponseT
+  /**
+   * GitHub is unreachable
+   */
+  503: ErrorResponseT
+}
+
+export type GetV1OrgsByOrgSlugGithubUpstreamRepositoryError =
+  GetV1OrgsByOrgSlugGithubUpstreamRepositoryErrors[keyof GetV1OrgsByOrgSlugGithubUpstreamRepositoryErrors]
+
+export type GetV1OrgsByOrgSlugGithubUpstreamRepositoryResponses = {
+  /**
+   * The upstream access verdict
+   */
+  200: {
+    fullName: string
+    accessible: boolean
+    defaultBranch: string | null
+    reason: string | null
+  }
+}
+
+export type GetV1OrgsByOrgSlugGithubUpstreamRepositoryResponse =
+  GetV1OrgsByOrgSlugGithubUpstreamRepositoryResponses[keyof GetV1OrgsByOrgSlugGithubUpstreamRepositoryResponses]
 
 export type GetV1OrgsByOrgSlugGithubOwnersData = {
   body?: never

@@ -275,6 +275,28 @@ export async function listInstallationRepositories(
   }
 }
 
+/** Reads every repository page for one installation. */
+export async function listAllInstallationRepositories(
+  client: GitHubClient,
+  credential: GitHubInstallationToken,
+  options: { perPage?: number } = {},
+): Promise<InstallationRepositoryPage> {
+  const perPage = options.perPage ?? 100
+  const repositories: GitHubRepository[] = []
+  let page = 1
+  let totalCount = 0
+
+  do {
+    const result = await listInstallationRepositories(client, credential, { page, perPage })
+    totalCount = result.totalCount
+    if (result.repositories.length === 0) break
+    repositories.push(...result.repositories)
+    page += 1
+  } while (repositories.length < totalCount)
+
+  return { repositories, totalCount }
+}
+
 /**
  * The commit a branch currently points at.
  *

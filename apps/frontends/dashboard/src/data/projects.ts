@@ -2,11 +2,14 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import {
   deleteV1OrgsByOrgSlugProjectsByProjectIdMutation,
   getV1OrgsByOrgSlugProjectsByProjectIdOptions,
+  getV1OrgsByOrgSlugProjectsByProjectIdJobsOptions,
+  getV1OrgsByOrgSlugProjectsByProjectIdJobsQueryKey,
   getV1OrgsByOrgSlugProjectsByProjectIdQueryKey,
   getV1OrgsByOrgSlugProjectsOptions,
   getV1OrgsByOrgSlugProjectsQueryKey,
   getV1RegionsOptions,
   patchV1OrgsByOrgSlugProjectsByProjectIdMutation,
+  postV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdRetryMutation,
 } from "@lib/api-client/generated/@tanstack/react-query.gen"
 
 export type ProjectStatus = "ready" | "building" | "failed" | "sleeping"
@@ -60,6 +63,7 @@ export type ProjectDetail = Project & {
   autoUpdateCadence: AutoUpdateCadence
   upstreamFullName: string | null
   createdLabel: string
+  pendingRepositoryCreation: boolean
 }
 
 export const PROJECT_STATUS_LABELS: Record<ProjectStatus, string> = {
@@ -220,8 +224,36 @@ export function useProject(orgSlug: string, projectId: string) {
             autoUpdateCadence: project.autoUpdateCadence,
             upstreamFullName: project.repository.upstreamFullName,
             createdLabel: relativeLabel(project.createdAt),
+            pendingRepositoryCreation: project.repository.pendingCreation,
           } satisfies ProjectDetail),
   }
+}
+
+export function useProjectProvisionJobs(orgSlug: string, projectId: string) {
+  return useQuery(
+    getV1OrgsByOrgSlugProjectsByProjectIdJobsOptions({ path: { orgSlug, projectId } }),
+  )
+}
+
+export function useRetryProvision(orgSlug: string, projectId: string) {
+  const client = useQueryClient()
+  return useMutation({
+    ...postV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdRetryMutation(),
+    onSuccess: async () => {
+      await Promise.all([
+        client.invalidateQueries({
+          queryKey: getV1OrgsByOrgSlugProjectsByProjectIdQueryKey({
+            path: { orgSlug, projectId },
+          }),
+        }),
+        client.invalidateQueries({
+          queryKey: getV1OrgsByOrgSlugProjectsByProjectIdJobsQueryKey({
+            path: { orgSlug, projectId },
+          }),
+        }),
+      ])
+    },
+  })
 }
 
 /** A repository-backed workflow that is not nested beneath a project group. */

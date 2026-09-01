@@ -51,6 +51,7 @@ import {
   getV1OrgsByOrgSlugGithubOwners,
   getV1OrgsByOrgSlugGithubRepositories,
   getV1OrgsByOrgSlugGithubRepositoryName,
+  getV1OrgsByOrgSlugGithubUpstreamRepository,
   getV1OrgsByOrgSlugInvites,
   getV1OrgsByOrgSlugMembers,
   getV1OrgsByOrgSlugOauthClients,
@@ -154,6 +155,7 @@ import {
   postV1OrgsByOrgSlugProjectsByProjectIdEnvByEnvVarIdReveal,
   postV1OrgsByOrgSlugProjectsByProjectIdFilesByFileIdReveal,
   postV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdCancel,
+  postV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdRetry,
   postV1OrgsByOrgSlugProjectsByProjectIdObservabilityKey,
   postV1OrgsByOrgSlugProjectsByProjectIdSandbox,
   postV1OrgsByOrgSlugProjectsByProjectIdSandboxActivity,
@@ -295,6 +297,9 @@ import type {
   GetV1OrgsByOrgSlugGithubRepositoryNameData,
   GetV1OrgsByOrgSlugGithubRepositoryNameError,
   GetV1OrgsByOrgSlugGithubRepositoryNameResponse,
+  GetV1OrgsByOrgSlugGithubUpstreamRepositoryData,
+  GetV1OrgsByOrgSlugGithubUpstreamRepositoryError,
+  GetV1OrgsByOrgSlugGithubUpstreamRepositoryResponse,
   GetV1OrgsByOrgSlugInvitesData,
   GetV1OrgsByOrgSlugInvitesError,
   GetV1OrgsByOrgSlugInvitesResponse,
@@ -569,6 +574,9 @@ import type {
   PostV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdCancelData,
   PostV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdCancelError,
   PostV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdCancelResponse,
+  PostV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdRetryData,
+  PostV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdRetryError,
+  PostV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdRetryResponse,
   PostV1OrgsByOrgSlugProjectsByProjectIdObservabilityKeyData,
   PostV1OrgsByOrgSlugProjectsByProjectIdObservabilityKeyError,
   PostV1OrgsByOrgSlugProjectsByProjectIdObservabilityKeyResponse,
@@ -1790,6 +1798,33 @@ export const getV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdOptions = (
   })
 
 /**
+ * Retries failed provisioning after GitHub already created the repository
+ */
+export const postV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdRetryMutation = (
+  options?: Partial<Options<PostV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdRetryData>>,
+): UseMutationOptions<
+  PostV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdRetryResponse,
+  PostV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdRetryError,
+  Options<PostV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdRetryData>
+> => {
+  const mutationOptions: UseMutationOptions<
+    PostV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdRetryResponse,
+    PostV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdRetryError,
+    Options<PostV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdRetryData>
+  > = {
+    mutationFn: async (fnOptions) => {
+      const { data } = await postV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdRetry({
+        ...options,
+        ...fnOptions,
+        throwOnError: true,
+      })
+      return data
+    },
+  }
+  return mutationOptions
+}
+
+/**
  * Cancels a queued or running agent-assisted upstream resolution
  */
 export const postV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdCancelMutation = (
@@ -2663,6 +2698,34 @@ export const getV1OrgsByOrgSlugGithubRepositoriesInfiniteOptions = (
   )
   return opts as Omit<typeof opts, "initialData">
 }
+
+export const getV1OrgsByOrgSlugGithubUpstreamRepositoryQueryKey = (
+  options: Options<GetV1OrgsByOrgSlugGithubUpstreamRepositoryData>,
+) => createQueryKey("getV1OrgsByOrgSlugGithubUpstreamRepository", options)
+
+/**
+ * Checks whether a manually entered upstream is accessible from a repository
+ */
+export const getV1OrgsByOrgSlugGithubUpstreamRepositoryOptions = (
+  options: Options<GetV1OrgsByOrgSlugGithubUpstreamRepositoryData>,
+) =>
+  queryOptions<
+    GetV1OrgsByOrgSlugGithubUpstreamRepositoryResponse,
+    GetV1OrgsByOrgSlugGithubUpstreamRepositoryError,
+    GetV1OrgsByOrgSlugGithubUpstreamRepositoryResponse,
+    ReturnType<typeof getV1OrgsByOrgSlugGithubUpstreamRepositoryQueryKey>
+  >({
+    queryFn: async ({ queryKey, signal }) => {
+      const { data } = await getV1OrgsByOrgSlugGithubUpstreamRepository({
+        ...options,
+        ...queryKey[0],
+        signal,
+        throwOnError: true,
+      })
+      return data
+    },
+    queryKey: getV1OrgsByOrgSlugGithubUpstreamRepositoryQueryKey(options),
+  })
 
 export const getV1OrgsByOrgSlugGithubOwnersQueryKey = (
   options: Options<GetV1OrgsByOrgSlugGithubOwnersData>,

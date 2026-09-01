@@ -73,6 +73,7 @@ import {
   postV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdCheckResponseTransformer,
   postV1OrgsByOrgSlugProjectsByProjectIdDomainsResponseTransformer,
   postV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdCancelResponseTransformer,
+  postV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdRetryResponseTransformer,
   postV1OrgsByOrgSlugProjectsByProjectIdSandboxResponseTransformer,
   postV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsBySuggestionIdAcceptResponseTransformer,
   postV1OrgsByOrgSlugProjectsByProjectIdUpdateSuggestionsBySuggestionIdDismissResponseTransformer,
@@ -201,6 +202,9 @@ import type {
   GetV1OrgsByOrgSlugGithubRepositoryNameData,
   GetV1OrgsByOrgSlugGithubRepositoryNameErrors,
   GetV1OrgsByOrgSlugGithubRepositoryNameResponses,
+  GetV1OrgsByOrgSlugGithubUpstreamRepositoryData,
+  GetV1OrgsByOrgSlugGithubUpstreamRepositoryErrors,
+  GetV1OrgsByOrgSlugGithubUpstreamRepositoryResponses,
   GetV1OrgsByOrgSlugInvitesData,
   GetV1OrgsByOrgSlugInvitesErrors,
   GetV1OrgsByOrgSlugInvitesResponses,
@@ -492,6 +496,9 @@ import type {
   PostV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdCancelData,
   PostV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdCancelErrors,
   PostV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdCancelResponses,
+  PostV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdRetryData,
+  PostV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdRetryErrors,
+  PostV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdRetryResponses,
   PostV1OrgsByOrgSlugProjectsByProjectIdObservabilityKeyData,
   PostV1OrgsByOrgSlugProjectsByProjectIdObservabilityKeyErrors,
   PostV1OrgsByOrgSlugProjectsByProjectIdObservabilityKeyResponses,
@@ -1263,6 +1270,28 @@ export const getV1OrgsByOrgSlugProjectsByProjectIdJobsByJobId = <
   })
 
 /**
+ * Retries failed provisioning after GitHub already created the repository
+ */
+export const postV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdRetry = <
+  ThrowOnError extends boolean = false,
+>(
+  options: Options<PostV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdRetryData, ThrowOnError>,
+): RequestResult<
+  PostV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdRetryResponses,
+  PostV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdRetryErrors,
+  ThrowOnError
+> =>
+  (options.client ?? client).post<
+    PostV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdRetryResponses,
+    PostV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdRetryErrors,
+    ThrowOnError
+  >({
+    responseTransformer: postV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdRetryResponseTransformer,
+    url: "/v1/orgs/{orgSlug}/projects/{projectId}/jobs/{jobId}/retry",
+    ...options,
+  })
+
+/**
  * Cancels a queued or running agent-assisted upstream resolution
  */
 export const postV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdCancel = <
@@ -1807,6 +1836,22 @@ export const getV1OrgsByOrgSlugGithubRepositories = <ThrowOnError extends boolea
     GetV1OrgsByOrgSlugGithubRepositoriesErrors,
     ThrowOnError
   >({ url: "/v1/orgs/{orgSlug}/github/repositories", ...options })
+
+/**
+ * Checks whether a manually entered upstream is accessible from a repository
+ */
+export const getV1OrgsByOrgSlugGithubUpstreamRepository = <ThrowOnError extends boolean = false>(
+  options: Options<GetV1OrgsByOrgSlugGithubUpstreamRepositoryData, ThrowOnError>,
+): RequestResult<
+  GetV1OrgsByOrgSlugGithubUpstreamRepositoryResponses,
+  GetV1OrgsByOrgSlugGithubUpstreamRepositoryErrors,
+  ThrowOnError
+> =>
+  (options.client ?? client).get<
+    GetV1OrgsByOrgSlugGithubUpstreamRepositoryResponses,
+    GetV1OrgsByOrgSlugGithubUpstreamRepositoryErrors,
+    ThrowOnError
+  >({ url: "/v1/orgs/{orgSlug}/github/upstream-repository", ...options })
 
 /**
  * GitHub accounts a new repository could be created on

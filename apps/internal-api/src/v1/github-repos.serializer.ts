@@ -105,3 +105,15 @@ export const githubSchemaNameCheckResponse = Type.Object({
     ]),
   ),
 })
+
+export const githubSchemaUpstreamCheckQuery = Type.Object({
+  fullName: Type.String({ pattern: "^[^/\\s]+/[^/\\s]+$", maxLength: 140 }),
+  githubRepoId: Type.String({ pattern: "^[0-9]+$", maxLength: 20 }),
+})
+
+export const githubSchemaUpstreamCheckResponse = Type.Object({
+  fullName: Type.String(),
+  accessible: Type.Boolean(),
+  defaultBranch: Nullable(Type.String()),
+  reason: Nullable(Type.String()),
+})

@@ -8,8 +8,11 @@ import {
   GitHubRateLimitError,
   GitHubTransportError,
   getRepository,
-  listInstallationRepositories,
+  listAllInstallationRepositories,
   MissingGitHubAppConfigError,
+  organizationGitHubCredential,
+  type GitHubClient,
+  type GitHubCredential,
 } from "@lib/github"
 import { db } from "@sproutos/db"
 import { Hono } from "hono"
@@ -28,6 +31,8 @@ import {
   githubSchemaOrgParam,
   githubSchemaRepositoryListQuery,
   githubSchemaRepositoryListResponse,
+  githubSchemaUpstreamCheckQuery,
+  githubSchemaUpstreamCheckResponse,
 } from "./github-repos.serializer"
 
 const errorResponse = {
@@ -72,7 +77,7 @@ export function repositoryNameProblem(name: string): string | null {
   return null
 }
 
-type InstallationRepositoryPage = Awaited<ReturnType<typeof listInstallationRepositories>>
+type InstallationRepositoryPage = Awaited<ReturnType<typeof listAllInstallationRepositories>>
 type ListedInstallation = { accountLogin: string; page: InstallationRepositoryPage }
 
 /**
@@ -91,7 +96,7 @@ export function mergeInstallationRepositoryPages(pages: InstallationRepositoryPa
 
   return {
     repositories: [...repositories.values()],
-    totalCount: pages.reduce((total, page) => total + page.totalCount, 0),
+    totalCount: repositories.size,
   }
 }
 
@@ -107,6 +112,30 @@ export function availableInstallationResults(
     if (result.reason instanceof GitHubNotFoundError) return []
     throw result.reason
   })
+}
+
+export async function checkManualUpstreamAccess(
+  client: GitHubClient,
+  credential: GitHubCredential,
+  repositoryId: number,
+  fullName: string,
+) {
+  const [owner, name] = fullName.split("/") as [string, string]
+  const upstream = await getRepository(client, credential, owner, name)
+  if (upstream.id === repositoryId) {
+    return {
+      fullName: upstream.fullName,
+      accessible: false,
+      defaultBranch: null,
+      reason: "A repository cannot be its own upstream.",
+    }
+  }
+  return {
+    fullName: upstream.fullName,
+    accessible: true,
+    defaultBranch: upstream.defaultBranch,
+    reason: null,
+  }
 }
 
 /**
@@ -179,8 +208,7 @@ const app = new Hono()
             })
             return {
               accountLogin: installation.accountLogin,
-              page: await listInstallationRepositories(createGitHubClient(), credential, {
-                page: query.page ?? 1,
+              page: await listAllInstallationRepositories(createGitHubClient(), credential, {
                 perPage: query.perPage ?? 100,
               }),
             }
@@ -231,6 +259,67 @@ const app = new Hono()
           return throwError(c, 503, ErrorCode.ServiceUnavailable, "GitHub is unreachable")
         }
 
+        throw error
+      }
+    },
+  )
+  .get(
+    "/:orgSlug/github/upstream-repository",
+    describeRoute({
+      description: "Checks whether a manually entered upstream is accessible from a repository",
+      responses: {
+        200: {
+          description: "The upstream access verdict",
+          content: { "application/json": { schema: resolver(githubSchemaUpstreamCheckResponse) } },
+        },
+        403: { description: "Caller lacks github:read", ...errorResponse },
+        429: { description: "GitHub rate limit reached", ...errorResponse },
+        503: { description: "GitHub is unreachable", ...errorResponse },
+      },
+    }),
+    validator("param", githubSchemaOrgParam),
+    validator("query", githubSchemaUpstreamCheckQuery),
+    requirePermission("github:read", collectionResource("github", "installation")),
+    async (c) => {
+      const { fullName, githubRepoId } = c.req.valid("query")
+      const repositoryId = Number(githubRepoId)
+
+      try {
+        const credential = await organizationGitHubCredential(db, c.var.organization.id, {
+          purpose: "project-repository-read",
+          repositoryId,
+        })
+        if (credential === undefined) {
+          return c.json({
+            fullName,
+            accessible: false,
+            defaultBranch: null,
+            reason:
+              "The selected repository is no longer accessible to SproutOS. Refresh the repository list and try again.",
+          })
+        }
+        return c.json(
+          await checkManualUpstreamAccess(createGitHubClient(), credential, repositoryId, fullName),
+        )
+      } catch (error) {
+        if (error instanceof GitHubNotFoundError) {
+          return c.json({
+            fullName,
+            accessible: false,
+            defaultBranch: null,
+            reason: "That upstream does not exist, or SproutOS cannot access it.",
+          })
+        }
+        if (error instanceof GitHubRateLimitError) {
+          return throwTooManyRequests(
+            c,
+            `GitHub rate limit reached. Retry in ${error.retryAfterSeconds} seconds.`,
+            ErrorCode.RateLimitExceeded,
+          )
+        }
+        if (error instanceof GitHubTransportError) {
+          return throwError(c, 503, ErrorCode.ServiceUnavailable, "GitHub is unreachable")
+        }
         throw error
       }
     },
