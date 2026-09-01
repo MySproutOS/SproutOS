@@ -122,7 +122,12 @@ describe("tenant-edge IAM boundary", () => {
       ]),
     )
     const acmeTask = resourceFrom(ecs, "aws_ecs_task_definition", "acme_worker")
-    expect(ecs).toContain("ecs_acme_worker_parameter_names = local.ecs_worker_base_parameter_names")
+    expect(ecs).toContain(
+      "ecs_acme_worker_parameter_names = concat(local.ecs_worker_base_parameter_names",
+    )
+    const isolatedParameterNames = (/ecs_acme_worker_parameter_names = concat\([\s\S]*?^  \]\)/m.exec(ecs))?.[0]
+    expect(isolatedParameterNames).toContain('"STRIPE_SECRET_KEY"')
+    expect(isolatedParameterNames).not.toContain("ANDROID_DEVELOPER_ID_STATUS_API_KEY")
     expect(acmeTask).toContain("local.ecs_acme_worker_parameter_secrets")
     expect(acmeTask).not.toContain("APK_SIGNER")
     expect(acmeTask).not.toContain("ANDROID_DEVELOPER_ID_STATUS_API_KEY")
