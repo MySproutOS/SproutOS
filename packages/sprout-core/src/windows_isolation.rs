@@ -339,10 +339,16 @@ fn resume_suspended(child: &rappct::LaunchedIo) -> Result<()> {
 impl Drop for WindowsAppContainerCommand {
     fn drop(&mut self) {
         // The only ACLs were placed below `temporary`; TempDir removes that entire tree after the
-        // run. Remove it before deleting its parent AppContainer profile.
+        // run. Remove it before deleting its parent AppContainer profile. Windows unregisters the
+        // profile identity but leaves the LocalAppData root it created, so remove that unique
+        // per-run folder explicitly after unregistering it.
         let _ = self.temporary.take();
         if let Some(profile) = self.profile.take() {
+            let profile_folder = profile.folder_path().ok();
             let _ = profile.delete();
+            if let Some(profile_folder) = profile_folder {
+                let _ = fs::remove_dir_all(profile_folder);
+            }
         }
     }
 }
