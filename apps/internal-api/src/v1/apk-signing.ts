@@ -16,6 +16,7 @@ import {
   failSigning,
   finalizeClientReleaseUpload,
   prepareClientRelease,
+  recordAndroidSignerHeartbeat,
 } from "@lib/jobs"
 import { db } from "@sproutos/db"
 import { constantTimeEqualUtf8 } from "@utils/crypto"
@@ -263,6 +264,7 @@ const app: Hono = new Hono()
       if (!signerAuthorized(c.req.header("Authorization")))
         return c.json({ message: "Unauthorized" }, 401)
       const signerId = c.req.valid("json").signer_id
+      await recordAndroidSignerHeartbeat(db, signerId)
       const job =
         (await claimClientSigningJob(db, signerId)) ?? (await claimSigningJob(db, signerId))
       if (job === undefined) return c.body(null, 204)

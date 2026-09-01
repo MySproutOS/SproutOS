@@ -203,8 +203,8 @@ export interface AgentUsage {
 export interface AndroidApp {
   certificateSha256: string | null
   createdAt: Generated<Timestamp>
-  developerConsoleCheckAttempts: Generated<number>
   developerConsoleAccount: string | null
+  developerConsoleCheckAttempts: Generated<number>
   developerConsoleClaimExpiresAt: Timestamp | null
   developerConsoleClaimToken: string | null
   developerConsoleError: string | null
@@ -235,6 +235,14 @@ export interface AndroidRegistrationReconcilerState {
   terminalBlockedAt: Timestamp | null
   terminalConfigFingerprint: string | null
   terminalFailureKind: string | null
+  updatedAt: Generated<Timestamp>
+}
+
+export interface AndroidSignerInstance {
+  createdAt: Generated<Timestamp>
+  id: string
+  lastSeenAt: Timestamp
+  signerId: string
   updatedAt: Generated<Timestamp>
 }
 
@@ -395,8 +403,8 @@ export interface ClientSignerJob {
 export interface ClientSigningIdentity {
   certificateSha256: string | null
   createdAt: Generated<Timestamp>
-  developerConsoleError: string | null
   developerConsoleAccount: string | null
+  developerConsoleError: string | null
   developerConsoleLastCheckedAt: Timestamp | null
   developerConsoleProviderState: string | null
   developerConsoleState: Generated<string>
@@ -1613,6 +1621,7 @@ export interface DB {
   agentUsage: AgentUsage
   androidApp: AndroidApp
   androidRegistrationReconcilerState: AndroidRegistrationReconcilerState
+  androidSignerInstance: AndroidSignerInstance
   androidSignerJob: AndroidSignerJob
   apiKey: ApiKey
   auditLog: AuditLog

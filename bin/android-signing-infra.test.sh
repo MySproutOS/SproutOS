@@ -59,10 +59,14 @@ reject 's3:DeleteObject' <(printf '%s\n' "$ANDROID_CUSTODY_POLICY") \
 require 'kms:EncryptionContext:aws:s3:arn' <(printf '%s\n' "$ANDROID_CUSTODY_POLICY") \
   'KMS use must be bound to the Android bucket encryption context'
 reject 'cloudwatch:PutMetricData' <(printf '%s\n' "$ANDROID_CUSTODY_POLICY") \
-  'do not grant metric publication before the durable signer-health producer exists'
+  'metric publication does not belong in the Android artifact-custody policy'
 SHARED_APPLICATION_POLICY=$(sed -n '/resource "aws_iam_policy" "application"/,/^}/p' "$COMPUTE_TF")
 reject 'android_artifacts|android_custody' <(printf '%s\n' "$SHARED_APPLICATION_POLICY") \
   'the shared legacy/router/ACME application policy must have no Android custody authority'
+require 'cloudwatch:PutMetricData' <(printf '%s\n' "$SHARED_APPLICATION_POLICY") \
+  'the platform worker needs metric publication for durable signer health'
+require 'cloudwatch:namespace.*SproutOS/AndroidSigner' <(printf '%s\n' "$SHARED_APPLICATION_POLICY") \
+  'metric publication must remain limited to the Android signer namespace'
 require 'resource "aws_iam_role_policy_attachment" "task_android_custody_broker"' "$ANDROID_TF" \
   'Android object custody must have a dedicated task-role attachment'
 ANDROID_CUSTODY_ATTACHMENT=$(sed -n \
@@ -189,7 +193,7 @@ require 'variable "android_signing_alarms_enabled"' "$ROOT/tofu/variables.tf" \
   'alarm creation must remain behind an explicit rollout switch'
 require 'default[[:space:]]*=[[:space:]]*false' \
   <(sed -n '/variable "android_signing_alarms_enabled"/,/^}/p' "$ROOT/tofu/variables.tf") \
-  'signing alarms must stay disabled until the last-seen and queue metric producers exist'
+  'signing alarms must stay disabled until the live signer and notification destination are ready'
 for metric in SignerHeartbeatAgeSeconds OldestQueuedJobAgeSeconds FailedJobs; do
   require "metric_name[[:space:]]*=[[:space:]]*\"$metric\"" "$ANDROID_TF" \
     "the alarm contract must name the $metric producer prerequisite"
@@ -198,9 +202,11 @@ reject 'kms_master_key_id[[:space:]]*=[[:space:]]*"alias/aws/sns"' "$ANDROID_TF"
   'CloudWatch cannot be granted use of the immutable AWS-managed SNS key policy'
 require 'AllowCloudWatchAlarmPublishing' "$ANDROID_TF" \
   'the conditional alarm key must authorize only the CloudWatch alarm publisher'
-require 'land a durable signer registry/last-seen record and a scheduled queue-health sampler' \
+require 'android_signer_instance.last_seen_at' \
   "$ROOT/docs/android-signing-infrastructure.md" \
-  'operators must be told that last-seen and queue metrics do not exist yet'
+  'operators must be told where the durable signer heartbeat lives'
+require 'ANDROID_SIGNING_METRICS_ENABLED' "$WEB_TASK" \
+  'the reviewed worker contract must activate the scheduled health sampler'
 require 'bin/handoff-ecs-task-definitions\.sh' "$ROOT/docs/android-signing-infrastructure.md" \
   'stage two must explicitly deploy the registered task with the existing immutable pre-192 image'
 require 'ignore_changes.*task_definition' "$ROOT/docs/android-signing-infrastructure.md" \

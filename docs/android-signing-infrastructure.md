@@ -101,10 +101,9 @@ On the dedicated signing host, provision these outside OpenTofu and outside AWS:
 - an HTTPS `APK_SIGNER_API_URL`.
 
 The host is outbound-only. Do not open an inbound port, install an AWS credential, or place the
-master identity in SSM, Secrets Manager, S3, an image, or this repository. Google exposes the
-Android Developer Console API, but this repository does not yet implement its OAuth consent,
-refresh-token custody, package registration, or ownership-proof flow. Those operations belong on
-the on-prem signer; do not invent or upload a refresh token to AWS or CI while that gap remains.
+master identity in SSM, Secrets Manager, S3, an image, or this repository. OAuth consent,
+refresh-token custody, package registration, and ownership proof run only on the on-prem signer.
+Never invent or upload its refresh token to AWS or CI.
 
 ## Retention and recovery
 
@@ -140,20 +139,22 @@ permanently deleting S3 versions. Those remain explicit custody and break-glass 
 `android_signing_alarms_enabled` defaults to `false`. Enabling it creates heartbeat, oldest queued
 job, and terminal-failure alarms plus an encrypted SNS topic. Before changing the variable:
 
-**Current prerequisite status:** the repository does not yet contain a durable signer last-seen
-record or a scheduled oldest-queued-job metric producer. The alarm resources are therefore defined
-but deliberately disabled; a successful OpenTofu validation is not evidence that those signals
-exist. The application role intentionally receives no `cloudwatch:PutMetricData` permission until
-the producer lands. When enabled, a conditional customer-managed KMS key authorizes only matching
-CloudWatch alarms to encrypt the SNS notifications; `alias/aws/sns` cannot be amended for that
-service-publisher use.
+Every authenticated claim poll upserts the signer's durable `android_signer_instance.last_seen_at`.
+The platform worker samples that record and both normalized signing queues once per minute, then
+publishes `SignerHeartbeatAgeSeconds`, `OldestQueuedJobAgeSeconds`, and the number of newly terminal
+`FailedJobs` to `SproutOS/AndroidSigner`. CloudWatch is not called from the claim or completion
+request path. The task role can call `PutMetricData` only for that namespace.
 
-1. land a durable signer registry/last-seen record and a scheduled queue-health sampler;
-2. emit `SignerHeartbeatAgeSeconds`, `OldestQueuedJobAgeSeconds`, and `FailedJobs` into the
-   `SproutOS/AndroidSigner` namespace without putting CloudWatch calls on the claim/complete
-   request's failure path;
+The producer ships enabled in the reviewed worker task contract, while the alarm resources remain
+disabled until the operational destination and live signer are ready. When alarms are enabled, a
+conditional customer-managed KMS key authorizes only matching CloudWatch alarms to encrypt the SNS
+notifications; `alias/aws/sns` cannot be amended for that service-publisher use.
+
+1. deploy the migration, API heartbeat writer, worker sampler, task-role policy, and worker rollout
+   gate;
+2. start the signer and confirm a fresh heartbeat plus queue/failure metrics in CloudWatch;
 3. subscribe and confirm an operations destination on `android_signing_alarm_topic_arn`;
-4. start the signer and confirm fresh metrics, then enable and apply the alarms.
+4. enable and apply the alarms, then prove their OK state and a controlled test notification.
 
 Missing heartbeat data is deliberately treated as a breach. Enabling the alarms before those four
 steps creates noise rather than monitoring.
