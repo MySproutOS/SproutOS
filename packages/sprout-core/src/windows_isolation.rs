@@ -69,20 +69,20 @@ impl WindowsAppContainerCommand {
                 return Err(SproutError::IsolationUnavailable(message));
             }
         };
-        // AppContainerProfile::ensure registers the profile identity, but Windows does not
-        // materialize its LocalAppData package directory until an app is launched. Hosted
-        // runners therefore return a valid folder path whose final component does not exist yet.
-        // Create that package-owned staging root before asking tempfile to create a child in it.
-        if let Err(source) = fs::create_dir_all(&profile_folder) {
+        // GetAppContainerFolderPath returns the package root, while Windows exposes the writable
+        // profile to the child at its `AC` descendant. Hosted runners do not materialize either
+        // directory merely by registering the profile, so create the documented LocalAppData
+        // root before staging below it.
+        let profile_local_app_data = profile_folder.join("AC");
+        if let Err(source) = fs::create_dir_all(&profile_local_app_data) {
             let _ = profile.delete();
             return Err(SproutError::Io {
                 operation: "create Windows AppContainer profile directory",
                 source,
             });
         }
-        // The AppContainer must be able to traverse every component leading to its staged
-        // workspace. On hosted Windows runners the profile directory is created by this host
-        // process, so it does not yet carry an ACE for the newly registered package SID.
+        // The host created this profile tree, so explicitly give the package SID traversal on
+        // the package root and ownership of its documented LocalAppData subtree.
         if let Err(error) = rappct::acl::grant_to_package(
             rappct::acl::ResourcePath::Directory(profile_folder.clone()),
             &profile.sid,
@@ -92,9 +92,18 @@ impl WindowsAppContainerCommand {
             let _ = profile.delete();
             return Err(SproutError::IsolationUnavailable(message));
         }
+        if let Err(error) = rappct::acl::grant_to_package(
+            rappct::acl::ResourcePath::Directory(profile_local_app_data.clone()),
+            &profile.sid,
+            rappct::acl::AccessMask(FILE_ALL_ACCESS),
+        ) {
+            let message = error.to_string();
+            let _ = profile.delete();
+            return Err(SproutError::IsolationUnavailable(message));
+        }
         let temporary = match tempfile::Builder::new()
             .prefix("sprout-stage-")
-            .tempdir_in(profile_folder)
+            .tempdir_in(&profile_local_app_data)
         {
             Ok(temporary) => temporary,
             Err(source) => {
@@ -192,7 +201,11 @@ impl WindowsAppContainerCommand {
         let workspace = self.staged_workspace.clone();
         let runtime_temporary = self.runtime_temporary.clone();
         tokio::task::spawn_blocking(move || {
-            let environment = allowlisted_environment(&runtime_temporary);
+            let profile_local_app_data = workspace
+                .ancestors()
+                .nth(2)
+                .expect("staged workspace is nested below AppContainer LocalAppData");
+            let environment = allowlisted_environment(&runtime_temporary, profile_local_app_data);
             let options = LaunchOptions {
                 exe: executable,
                 cwd: Some(workspace),
@@ -268,20 +281,24 @@ fn error_chain(error: &(dyn std::error::Error + 'static)) -> String {
 
 fn allowlisted_environment(
     runtime_temporary: &Path,
+    profile_local_app_data: &Path,
 ) -> Vec<(std::ffi::OsString, std::ffi::OsString)> {
     let mut environment: Vec<(std::ffi::OsString, std::ffi::OsString)> =
         vec![("LANG".into(), "C".into()), ("LC_ALL".into(), "C".into())];
     // CreateProcess and the Windows runtime require this narrow system environment even when the
     // child is launched by absolute path. CreateProcess still requires PATH when its environment is
     // fully replaced, so synthesize a system-only value instead of inheriting the user's PATH.
-    // AppContainer profile resolution requires LOCALAPPDATA even though the child cannot read it
-    // without an ACL. TEMP/TMP point inside the AppContainer ACL tree below; no user profile,
+    // TEMP/TMP and LOCALAPPDATA point inside the AppContainer-owned tree; no host user profile,
     // credential, or proxy value crosses the boundary.
-    for name in ["SystemRoot", "windir", "ComSpec", "PATHEXT", "LOCALAPPDATA"] {
+    for name in ["SystemRoot", "windir", "ComSpec", "PATHEXT"] {
         if let Some(value) = std::env::var_os(name) {
             environment.push((name.into(), value));
         }
     }
+    environment.push((
+        "LOCALAPPDATA".into(),
+        profile_local_app_data.as_os_str().to_owned(),
+    ));
     if let Some(system_root) = std::env::var_os("SystemRoot") {
         let system_root = PathBuf::from(system_root);
         let path = std::env::join_paths([system_root.join("System32"), system_root])
