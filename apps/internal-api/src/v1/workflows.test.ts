@@ -22,6 +22,15 @@ import {
  * window is taken *per workflow* rather than across all of them.
  */
 const up = await databaseReachable()
+const retentionUp = await (async () => {
+  if (!up) return false
+  try {
+    await sql`select 1 from credit_retention_state limit 0`.execute(db)
+    return true
+  } catch {
+    return false
+  }
+})()
 
 type Json = Record<string, unknown>
 
@@ -590,6 +599,55 @@ describe.skipIf(!up)("recent runs across the organization", () => {
         { method: "POST", headers: authHeaders(actor()), body: "null" },
       )
       expect(invalid.status).toBe(400)
+    })
+
+    it("refuses a manual run while the organization is suspended", async ({ skip }) => {
+      if (!up || !retentionUp) skip()
+      const workflowId = await makeWorkflow("Suspended")
+      const graph = {
+        nodes: [{ id: "start", type: "trigger.manual", name: "Start", config: {} }],
+        edges: [],
+      }
+      await app.request(`/v1/orgs/${orgSlug}/projects/${projectId}/workflows/${workflowId}/graph`, {
+        method: "PUT",
+        headers: authHeaders(actor()),
+        body: JSON.stringify({ graph }),
+      })
+      await db
+        .insertInto("creditRetentionState")
+        .values({
+          organizationId,
+          generation: v7(),
+          status: "suspended",
+          warningStage: "suspended",
+          exhaustedAt: new Date(),
+          deleteAfter: new Date(Date.now() + 48 * 60 * 60 * 1000),
+        })
+        .execute()
+      try {
+        const response = await app.request(
+          `/v1/orgs/${orgSlug}/projects/${projectId}/workflows/${workflowId}/runs`,
+          {
+            method: "POST",
+            headers: authHeaders(actor()),
+            body: JSON.stringify({ trigger: { source: "test" } }),
+          },
+        )
+        expect(response.status).toBe(402)
+        expect(await response.json()).toMatchObject({ error: { code: "InsufficientCredit" } })
+        expect(
+          await db
+            .selectFrom("workflowRun")
+            .select("id")
+            .where("workflowId", "=", workflowId)
+            .execute(),
+        ).toEqual([])
+      } finally {
+        await db
+          .deleteFrom("creditRetentionState")
+          .where("organizationId", "=", organizationId)
+          .execute()
+      }
     })
 
     it("round-trips node positions the editor set", async ({ skip }) => {

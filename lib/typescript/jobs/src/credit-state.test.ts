@@ -139,6 +139,10 @@ afterAll(async () => {
       .where("organizationId", "in", [fundedId, exhaustedId, reservedId])
       .execute()
     await tx
+      .deleteFrom("backgroundJob")
+      .where("organizationId", "in", [fundedId, exhaustedId, reservedId])
+      .execute()
+    await tx
       .deleteFrom("creditRetentionState")
       .where("organizationId", "in", [fundedId, exhaustedId, reservedId])
       .execute()
@@ -168,6 +172,19 @@ describe.skipIf(!reachable)("refreshCreditStates", () => {
     expect(await readCreditState(valkey, exhaustedId)).toBe("exhausted")
     expect(await readCreditState(valkey, reservedId)).toBe("exhausted")
     expect(await valkey.ttl(`credit:${exhaustedId}`)).toBeGreaterThan(10 * 60)
+    const withdrawals = await db
+      .selectFrom("backgroundJob")
+      .select(["organizationId", "payload"])
+      .where("kind", "=", "billing.reconcile_static_access")
+      .where("organizationId", "in", [exhaustedId, reservedId])
+      .execute()
+    expect(withdrawals).toHaveLength(2)
+    expect(new Set(withdrawals.map(({ organizationId }) => organizationId))).toEqual(
+      new Set([exhaustedId, reservedId]),
+    )
+    expect(withdrawals.every(({ payload }) => (payload as { suspended?: boolean }).suspended)).toBe(
+      true,
+    )
   })
 
   it("records one fixed 48-hour deadline and clears it after enough credit is added", async () => {
@@ -206,5 +223,14 @@ describe.skipIf(!reachable)("refreshCreditStates", () => {
         .where("organizationId", "=", reservedId)
         .executeTakeFirstOrThrow(),
     ).resolves.toMatchObject({ exhaustedAt: null, deleteAfter: null })
+    await expect(
+      db
+        .selectFrom("backgroundJob")
+        .select("payload")
+        .where("kind", "=", "billing.reconcile_static_access")
+        .where("organizationId", "=", reservedId)
+        .where(sql<boolean>`payload ->> 'suspended' = 'false'`)
+        .executeTakeFirst(),
+    ).resolves.toBeDefined()
   })
 })

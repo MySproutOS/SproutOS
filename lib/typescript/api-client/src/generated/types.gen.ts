@@ -1325,6 +1325,10 @@ export type PostV1OrgsByOrgSlugProjectsErrors = {
    */
   400: ErrorResponseT
   /**
+   * The organization is suspended for insufficient credit
+   */
+  402: ErrorResponseT
+  /**
    * Caller lacks project:create
    */
   403: ErrorResponseT
@@ -2749,6 +2753,10 @@ export type PostV1OrgsByOrgSlugProjectsByProjectIdSandboxData = {
 }
 
 export type PostV1OrgsByOrgSlugProjectsByProjectIdSandboxErrors = {
+  /**
+   * The organization is suspended for insufficient credit
+   */
+  402: ErrorResponseT
   /**
    * Caller lacks sandbox:write
    */
@@ -4362,6 +4370,10 @@ export type PostV1OrgsByOrgSlugProjectsByProjectIdDeploymentsErrors = {
    */
   400: ErrorResponseT
   /**
+   * The organization is suspended for insufficient credit
+   */
+  402: ErrorResponseT
+  /**
    * Caller lacks deployment:write
    */
   403: ErrorResponseT
@@ -4477,6 +4489,10 @@ export type PostV1OrgsByOrgSlugDeploymentsByDeploymentIdRollbackErrors = {
    * This deployment cannot be rolled back to
    */
   400: ErrorResponseT
+  /**
+   * The organization is suspended for insufficient credit
+   */
+  402: ErrorResponseT
   /**
    * Caller lacks deployment:write
    */
@@ -5207,6 +5223,10 @@ export type PostV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsData 
 }
 
 export type PostV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsErrors = {
+  /**
+   * The organization is suspended for insufficient credit
+   */
+  402: ErrorResponseT
   /**
    * Caller lacks workflow:run
    */
@@ -7513,6 +7533,10 @@ export type PostV1OrgsByOrgSlugProjectsByProjectIdDeployTokenErrors = {
    */
   400: unknown
   /**
+   * The organization is suspended for insufficient credit
+   */
+  402: unknown
+  /**
    * Caller lacks deployment:write
    */
   403: unknown
@@ -7551,6 +7575,10 @@ export type PostV1DeployTokenErrors = {
    */
   401: unknown
   /**
+   * The organization is suspended for insufficient credit
+   */
+  402: unknown
+  /**
    * No SproutOS project is connected to that repository
    */
   404: unknown
@@ -7584,6 +7612,10 @@ export type PostV1DeployUploadUrlErrors = {
    * Missing or expired deploy token
    */
   401: unknown
+  /**
+   * The organization is suspended for insufficient credit
+   */
+  402: unknown
 }
 
 export type PostV1DeployUploadUrlResponses = {
@@ -7613,6 +7645,10 @@ export type PostV1DeployStaticUploadUrlErrors = {
    * Missing or expired deploy token
    */
   401: unknown
+  /**
+   * The organization is suspended for insufficient credit
+   */
+  402: unknown
 }
 
 export type PostV1DeployStaticUploadUrlResponses = {
@@ -7656,6 +7692,10 @@ export type PostV1DeployReleaseErrors = {
    * Missing or expired deploy token
    */
   401: unknown
+  /**
+   * The organization is suspended for insufficient credit
+   */
+  402: unknown
 }
 
 export type PostV1DeployReleaseResponses = {
@@ -7724,6 +7764,10 @@ export type PostV1DeployMigrateErrors = {
    * Missing or expired deploy token
    */
   401: unknown
+  /**
+   * The organization is suspended for insufficient credit
+   */
+  402: unknown
 }
 
 export type PostV1DeployMigrateResponses = {

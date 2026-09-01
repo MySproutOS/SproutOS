@@ -1,7 +1,7 @@
 import { createHmac, timingSafeEqual } from "node:crypto"
 import { PutObjectCommand, S3Client } from "@aws-sdk/client-s3"
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner"
-import { crudDeployment, fetchDeployment, fetchProject } from "@lib/dao"
+import { crudDeployment, fetchCreditRetentionState, fetchDeployment, fetchProject } from "@lib/dao"
 import {
   ANDROID_VERSION_CODE_MAX,
   androidVersionError,
@@ -31,7 +31,8 @@ import { validate as validateUUID } from "uuid"
 import { validator } from "../utils/validator"
 import { authMiddleware } from "../middleware"
 import { requirePermission } from "../rbac"
-import { throwBadRequest, throwNotFound } from "../utils/http-exception"
+import { ErrorCode } from "../utils/errors.enum"
+import { throwBadRequest, throwError, throwNotFound } from "../utils/http-exception"
 import { deployStatusSchemaParam, deployStatusSchemaResponse } from "./deploy.serializer"
 
 /**
@@ -279,6 +280,16 @@ function bearer(
   return readDeployToken(token, tokenSecret())
 }
 
+async function suspendedProjectResponse(c: Parameters<typeof throwError>[0], projectId: string) {
+  if (!(await fetchCreditRetentionState(db).isProjectUsageSuspended(projectId))) return undefined
+  return throwError(
+    c,
+    402,
+    ErrorCode.InsufficientCredit,
+    "Add credit before starting or uploading a deployment. Hosted data remains protected during the 48-hour retention window.",
+  )
+}
+
 const deploy: Hono = new Hono()
   .post(
     "/deploy/catalogue/import",
@@ -330,6 +341,7 @@ const deploy: Hono = new Hono()
           content: { "application/json": { schema: resolver(tokenResponse) } },
         },
         400: { description: "The project is a group and cannot deploy" },
+        402: { description: "The organization is suspended for insufficient credit" },
         403: { description: "Caller lacks deployment:write" },
         404: { description: "No such project in this organization" },
       },
@@ -346,6 +358,8 @@ const deploy: Hono = new Hono()
       const project = await resolveInteractiveProject(c.var.organization.id, projectId)
       if (project === undefined) return throwNotFound(c, "Project not found")
       if (project.isGroup) return throwBadRequest(c, "A project group cannot be deployed")
+      const suspended = await suspendedProjectResponse(c, project.id)
+      if (suspended !== undefined) return suspended
 
       const expiresAt = Math.floor(Date.now() / 1000) + TOKEN_TTL_SECONDS
       return c.json({
@@ -365,6 +379,7 @@ const deploy: Hono = new Hono()
           content: { "application/json": { schema: resolver(tokenResponse) } },
         },
         401: { description: "The OIDC token did not verify" },
+        402: { description: "The organization is suspended for insufficient credit" },
         404: { description: "No SproutOS project is connected to that repository" },
       },
     }),
@@ -487,6 +502,9 @@ const deploy: Hono = new Hono()
         )
       }
 
+      const suspended = await suspendedProjectResponse(c, project.id)
+      if (suspended !== undefined) return suspended
+
       const expiresAt = Math.floor(Date.now() / 1000) + TOKEN_TTL_SECONDS
       return c.json({
         token: mintDeployToken(project.id, expiresAt, tokenSecret()),
@@ -503,6 +521,7 @@ const deploy: Hono = new Hono()
           description: "Where to PUT the archive",
           content: { "application/json": { schema: resolver(uploadResponse) } },
         },
+        402: { description: "The organization is suspended for insufficient credit" },
         401: { description: "Missing or expired deploy token" },
       },
     }),
@@ -510,6 +529,8 @@ const deploy: Hono = new Hono()
     async (c) => {
       const authorized = bearer(c.req.header("Authorization"))
       if (authorized === undefined) return c.json({ message: "Unauthorized" }, 401)
+      const suspended = await suspendedProjectResponse(c, authorized.projectId)
+      if (suspended !== undefined) return suspended
 
       const { digest } = c.req.valid("json")
 
@@ -558,6 +579,7 @@ const deploy: Hono = new Hono()
           description: "Where to PUT the asset archive",
           content: { "application/json": { schema: resolver(uploadResponse) } },
         },
+        402: { description: "The organization is suspended for insufficient credit" },
         401: { description: "Missing or expired deploy token" },
       },
     }),
@@ -565,6 +587,8 @@ const deploy: Hono = new Hono()
     async (c) => {
       const authorized = bearer(c.req.header("Authorization"))
       if (authorized === undefined) return c.json({ message: "Unauthorized" }, 401)
+      const suspended = await suspendedProjectResponse(c, authorized.projectId)
+      if (suspended !== undefined) return suspended
 
       const { digest } = c.req.valid("json")
 
@@ -605,6 +629,7 @@ const deploy: Hono = new Hono()
           description: "The deployment",
           content: { "application/json": { schema: resolver(releaseResponse) } },
         },
+        402: { description: "The organization is suspended for insufficient credit" },
         401: { description: "Missing or expired deploy token" },
       },
     }),
@@ -612,6 +637,8 @@ const deploy: Hono = new Hono()
     async (c) => {
       const authorized = bearer(c.req.header("Authorization"))
       if (authorized === undefined) return c.json({ message: "Unauthorized" }, 401)
+      const suspended = await suspendedProjectResponse(c, authorized.projectId)
+      if (suspended !== undefined) return suspended
 
       const json = c.req.valid("json")
 
@@ -808,6 +835,7 @@ const deploy: Hono = new Hono()
           description: "The migrator ran. `ok` says whether it succeeded",
           content: { "application/json": { schema: resolver(migrateResponse) } },
         },
+        402: { description: "The organization is suspended for insufficient credit" },
         401: { description: "Missing or expired deploy token" },
       },
     }),
@@ -815,6 +843,8 @@ const deploy: Hono = new Hono()
     async (c) => {
       const authorized = bearer(c.req.header("Authorization"))
       if (authorized === undefined) return c.json({ message: "Unauthorized" }, 401)
+      const suspended = await suspendedProjectResponse(c, authorized.projectId)
+      if (suspended !== undefined) return suspended
 
       const json = c.req.valid("json")
 

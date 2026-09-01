@@ -2,7 +2,13 @@ import { DeleteAliasCommand, LambdaClient } from "@aws-sdk/client-lambda"
 import { CloudFrontKeyValueStoreClient } from "@aws-sdk/client-cloudfront-keyvaluestore"
 import { Route53Client } from "@aws-sdk/client-route-53"
 import { S3Client } from "@aws-sdk/client-s3"
-import { crudDeployment, fetchDeployment, fetchProjectEnvVar, fetchProjectFile } from "@lib/dao"
+import {
+  crudDeployment,
+  fetchCreditRetentionState,
+  fetchDeployment,
+  fetchProjectEnvVar,
+  fetchProjectFile,
+} from "@lib/dao"
 import { openEnvVarValue } from "@lib/envelope"
 import {
   DEFAULT_HANDLER,
@@ -302,6 +308,15 @@ export function publishRelease(options?: PublishOptions): JobHandler {
     const { deployment, project } = found
     if (deployment.status === "torn_down") return
 
+    if (await fetchCreditRetentionState(db).isUsageSuspended(project.organizationId)) {
+      await crudDeployment(db).update(deployment.id, {
+        status: "error",
+        failureReason:
+          "This deployment was not started because the organization is suspended for insufficient credit.",
+      })
+      return
+    }
+
     return withProjectLock(
       db,
       project.id,
@@ -315,6 +330,14 @@ export function publishRelease(options?: PublishOptions): JobHandler {
             .where("id", "=", project.id)
             .executeTakeFirst()
           if (currentProject === undefined || currentProject.deletedAt !== null) return
+          if (await fetchCreditRetentionState(db).isUsageSuspended(project.organizationId)) {
+            await crudDeployment(db).update(deployment.id, {
+              status: "error",
+              failureReason:
+                "This deployment was not started because the organization is suspended for insufficient credit.",
+            })
+            return
+          }
 
           const livePointer = await db
             .selectFrom("project")

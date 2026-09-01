@@ -1,4 +1,4 @@
-import { crudAuditLog, crudDeployment, fetchDeployment } from "@lib/dao"
+import { crudAuditLog, crudDeployment, fetchCreditRetentionState, fetchDeployment } from "@lib/dao"
 import {
   functionName,
   pointAlias,
@@ -24,7 +24,8 @@ import { v7 } from "uuid"
 import { authMiddleware } from "../middleware"
 import { requirePermission } from "../rbac"
 import { ErrorSchemaResponse } from "../utils/common.serializer"
-import { throwBadRequest, throwNotFound } from "../utils/http-exception"
+import { ErrorCode } from "../utils/errors.enum"
+import { throwBadRequest, throwError, throwNotFound } from "../utils/http-exception"
 import { auditContext } from "../utils/request-context"
 import {
   deploymentSchemaListResponse,
@@ -250,6 +251,10 @@ const app = new Hono()
           content: { "application/json": { schema: resolver(deploymentSchemaResponse) } },
         },
         400: { description: "A preview needs a PR number", ...errorResponse },
+        402: {
+          description: "The organization is suspended for insufficient credit",
+          ...errorResponse,
+        },
         403: { description: "Caller lacks deployment:write", ...errorResponse },
         404: { description: "No such project in this organization", ...errorResponse },
       },
@@ -269,6 +274,14 @@ const app = new Hono()
         .executeTakeFirst()
 
       if (project === undefined) return throwNotFound(c, "Project not found")
+      if (await fetchCreditRetentionState(db).isUsageSuspended(c.var.organization.id)) {
+        return throwError(
+          c,
+          402,
+          ErrorCode.InsufficientCredit,
+          "Add credit before starting a deployment. Hosted data remains protected during the 48-hour retention window.",
+        )
+      }
 
       const kind = body.kind ?? "production"
 
@@ -329,6 +342,10 @@ const app = new Hono()
           content: { "application/json": { schema: resolver(deploymentSchemaResponse) } },
         },
         400: { description: "This deployment cannot be rolled back to", ...errorResponse },
+        402: {
+          description: "The organization is suspended for insufficient credit",
+          ...errorResponse,
+        },
         403: { description: "Caller lacks deployment:write", ...errorResponse },
         404: { description: "No such deployment in this organization", ...errorResponse },
       },
@@ -341,6 +358,14 @@ const app = new Hono()
       const { deployment, project } = found
       if (project.organizationId !== c.var.organization.id) {
         return throwNotFound(c, "Deployment not found")
+      }
+      if (await fetchCreditRetentionState(db).isUsageSuspended(project.organizationId)) {
+        return throwError(
+          c,
+          402,
+          ErrorCode.InsufficientCredit,
+          "Add credit before changing production traffic. Hosted data remains protected during the 48-hour retention window.",
+        )
       }
 
       /*
@@ -371,6 +396,14 @@ const app = new Hono()
         db,
         project.id,
         async () => {
+          if (await fetchCreditRetentionState(db).isUsageSuspended(project.organizationId)) {
+            return throwError(
+              c,
+              402,
+              ErrorCode.InsufficientCredit,
+              "Add credit before changing production traffic. Hosted data remains protected during the 48-hour retention window.",
+            )
+          }
           const lockedProject = await db
             .selectFrom("project")
             .leftJoin(
