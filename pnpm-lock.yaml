@@ -441,6 +441,9 @@ importers:
       '@aws-sdk/client-secrets-manager':
         specifier: 'catalog:'
         version: 3.1120.0
+      '@aws-sdk/client-sesv2':
+        specifier: 'catalog:'
+        version: 3.1123.0
       '@aws-sdk/s3-request-presigner':
         specifier: ^3.1117.0
         version: 3.1117.0
@@ -516,6 +519,12 @@ importers:
       '@peculiar/x509':
         specifier: 'catalog:'
         version: 1.14.3
+      '@react-email/components':
+        specifier: 'catalog:'
+        version: 1.0.12(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
+      '@react-email/render':
+        specifier: 'catalog:'
+        version: 2.1.0(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
       '@scalar/hono-api-reference':
         specifier: ^0.11.14
         version: 0.11.14(hono@4.13.3)
@@ -567,12 +576,18 @@ importers:
       mime-types:
         specifier: ^3.0.2
         version: 3.0.2
+      nodemailer:
+        specifier: 'catalog:'
+        version: 9.1.0
       openai:
         specifier: 'catalog:'
         version: 7.5.0(@aws-sdk/credential-provider-node@3.972.82)(@smithy/signature-v4@5.7.2)(ws@8.21.3)(zod@4.4.3)
       pg:
         specifier: ^8.23.0
         version: 8.23.0
+      react:
+        specifier: 'catalog:'
+        version: 19.2.8
       stripe:
         specifier: 'catalog:'
         version: 22.5.0(@types/node@26.2.0)
