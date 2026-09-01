@@ -162,8 +162,14 @@ export async function getPullRequestState(
     ) ||
     status.data.state === "failure" ||
     status.data.state === "error"
+  /*
+    GitHub reports the combined legacy status as "pending" when there are no status contexts.
+    That empty channel must not veto successful Checks API runs forever; an actual status context
+    that is pending still blocks.
+  */
   const anyPending =
-    checkRuns.some((run) => run.status !== "completed") || status.data.state === "pending"
+    checkRuns.some((run) => run.status !== "completed") ||
+    (statuses.length > 0 && status.data.state === "pending")
   const count = checkRuns.length + statuses.length
 
   return {
