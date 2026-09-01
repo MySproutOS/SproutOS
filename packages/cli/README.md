@@ -110,8 +110,8 @@ reviewed operation rather than a disguised release promotion.
 
 The first authenticated production build was the immutable `cli-v0.1.1` release. Its `/download`
 consumer and production IAM/task wiring were deployed before that tag was created and promoted.
-For the current `cli-v0.1.2` release, and every later release, first merge and deploy the consumer
-changes, then run **Promote an existing CLI release** with the matching version and the exact
+For every later release, first merge and deploy the consumer changes, then run **Promote an
+existing CLI release** with the matching version and the exact
 task-definition ARN registered by the reviewed deployment contract. The protected workflow records
 the pointer, then uses the existing deployment role to combine that contract with the image already
 serving; the promotion role itself cannot register or select code. Do not put a placeholder version
