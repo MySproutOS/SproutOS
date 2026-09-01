@@ -84,7 +84,12 @@ describe.skipIf(!up)("the log store", () => {
     await expect(ensureSchema()).resolves.toBeUndefined()
 
     const result = await clickhouse().query({
-      query: "select count() as tables from system.tables where name = 'log_record'",
+      // `system.tables` spans every database. Developers and CI may run isolated suites in
+      // multiple databases on one ClickHouse server, all with the same schema; count only the
+      // database this client is proving idempotent.
+      query:
+        "select count() as tables from system.tables " +
+        "where database = currentDatabase() and name = 'log_record'",
       format: "JSONEachRow",
     })
     expect(Number((await result.json<{ tables: string }>())[0]?.tables ?? 0)).toBe(1)

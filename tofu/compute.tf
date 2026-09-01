@@ -1032,6 +1032,18 @@ resource "aws_iam_policy" "application" {
         Resource = "*"
       },
       {
+        # The worker publishes only Android signer fleet health. PutMetricData cannot be scoped to
+        # an ARN, so the namespace condition is the resource boundary.
+        Effect   = "Allow"
+        Action   = ["cloudwatch:PutMetricData"]
+        Resource = "*"
+        Condition = {
+          StringEquals = {
+            "cloudwatch:namespace" = "SproutOS/AndroidSigner"
+          }
+        }
+      },
+      {
         # Transactional retention and billing notices. The identity is domain-scoped and the
         # application uses SES v2's SendEmail API; no bulk or identity-management permission.
         Effect   = "Allow"

@@ -415,6 +415,10 @@
       "command": ["node", "/opt/sproutos/api/worker.js"],
       "environment": [
         {
+          "name": "ANDROID_SIGNING_METRICS_ENABLED",
+          "value": "1"
+        },
+        {
           "name": "EMAIL_TRANSPORT",
           "value": "sesv2"
         },

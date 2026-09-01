@@ -97,6 +97,37 @@ describe.skipIf(!reachable)("metering schedules", () => {
     ])
   })
 
+  it("schedules Android signer health only behind its explicit rollout gate", async () => {
+    const now = new Date(`${TEST_YEAR}-12-30T23:57:45.000Z`)
+    const key = `${JOB_KINDS.sampleAndroidSignerHealth}:${now.toISOString().slice(0, 16)}`
+    const previous = process.env.ANDROID_SIGNING_METRICS_ENABLED
+    delete process.env.ANDROID_SIGNING_METRICS_ENABLED
+    await scheduleRecurring(db, now)
+    expect(
+      await db
+        .selectFrom("backgroundJob")
+        .select("id")
+        .where("idempotencyKey", "=", key)
+        .executeTakeFirst(),
+    ).toBeUndefined()
+
+    process.env.ANDROID_SIGNING_METRICS_ENABLED = "1"
+    try {
+      await scheduleRecurring(db, now)
+      await scheduleRecurring(db, now)
+    } finally {
+      if (previous === undefined) delete process.env.ANDROID_SIGNING_METRICS_ENABLED
+      else process.env.ANDROID_SIGNING_METRICS_ENABLED = previous
+    }
+    expect(
+      await db
+        .selectFrom("backgroundJob")
+        .select(["kind", "idempotencyKey"])
+        .where("idempotencyKey", "=", key)
+        .execute(),
+    ).toEqual([{ kind: JOB_KINDS.sampleAndroidSignerHealth, idempotencyKey: key }])
+  })
+
   it("does not enqueue certificate jobs while the isolated worker is disabled", async ({
     skip,
   }) => {
