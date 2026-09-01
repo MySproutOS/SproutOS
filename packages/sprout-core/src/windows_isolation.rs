@@ -483,7 +483,7 @@ fn main() {{
  std::fs::write("allowed", b"ok").unwrap();
  if std::fs::read({credential_literal}).is_ok() {{ std::process::exit(10); }}
  if std::fs::write({outside_literal}, b"bad").is_ok() {{ std::process::exit(11); }}
- if std::net::TcpStream::connect({listener_literal}).is_ok() {{ std::process::exit(12); }}
+ if std::net::TcpStream::connect_timeout(&{listener_literal}.parse().unwrap(), std::time::Duration::from_millis(250)).is_ok() {{ std::process::exit(12); }}
 }}"#
             ),
         )
