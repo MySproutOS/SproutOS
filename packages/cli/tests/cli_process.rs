@@ -24,16 +24,16 @@ fn current_target() -> &'static str {
 
 fn published_umami_platform_manifest() -> &'static str {
     match current_target() {
-        "darwin_arm64" => "sha256:efb88a3089d4b14b12d155f09c360227f0de2f3dd21ccce42df2c901036f16e9",
-        "darwin_amd64" => "sha256:a19fad8d53f268fcf504ae61e9bb01f27e07e6ad7d16930250324bd9ee855ced",
+        "darwin_arm64" => "sha256:50415a8248652404d151f03d89d5b747668c13c9b8ebf2376a7be55b51547b8a",
+        "darwin_amd64" => "sha256:c67a3c14042f8cef6f071e2407e216fb1dbde3359a49e0a7f31fe70e6dbb9a04",
         "linux_arm64_musl" => {
-            "sha256:fab6e3d341c5b5283d6691510c16b21220b0395fee678ac23f268376429dfc67"
+            "sha256:a7d10f0a0142b2669c81d419473a7c569a168e7b93b8492f25011305edf5e2e2"
         }
         "linux_amd64_musl" => {
-            "sha256:02e78f31193bf7de4e1ac511617de7e646932c38fb016547ba3fb2eeb1e17c27"
+            "sha256:83fce5a39a3bf2d806d5315503a4b74483833e77ec52e2eff76aab2c77dbf5d1"
         }
         "windows_amd64" => {
-            "sha256:3fc4dfd7673da178aadade00261a9089a7bbe467dbbc14de324cd6f9780e8af0"
+            "sha256:387371c24249692b5a603c15f8e13e3b30aac7377152b1533634aeb34d04b87b"
         }
         target => panic!("unsupported published target: {target}"),
     }
@@ -76,7 +76,7 @@ fn resolution(target: &str) -> Value {
 }
 
 fn published_umami_resolution() -> Value {
-    let plugin_digest = "sha256:1f2b4dffa39090d78aeebbd9596ed887d7950259ee5091cdcc0952ca684bf15e";
+    let plugin_digest = "sha256:ef4b3edd3fba984e95a6cde3508168f01f9a6dcd8820a097d990ef0d82902357";
     json!({
         "template_id": "umami",
         "upstream_commit": "ca661c7057984aa98ed4f7083d84dae2f65bfcb0",
@@ -87,7 +87,7 @@ fn published_umami_resolution() -> Value {
             "repository": "MySproutOS/Deployment-Templates",
             "workflow": ".github/workflows/publish.yml",
             "git_ref": "refs/heads/main",
-            "source_commit": "20b1f92d0f52c32a33f996a41bdc30817ec73a79",
+            "source_commit": "f1e3c82321527059ae6e76f464494f1b6c89a9d0",
             "oidc_issuer": "https://token.actions.githubusercontent.com",
             "workflow_identity": "MySproutOS/Deployment-Templates/.github/workflows/publish.yml@refs/heads/main",
             "github_hosted_runner": true
@@ -97,7 +97,7 @@ fn published_umami_resolution() -> Value {
             "workspace": "/workspace",
             "template": {
                 "id": "umami",
-                "catalogue_digest": "sha256:c7d78bba2173c429559c87806b66475bc54b2a78bccddbe77823b671eebe2deb",
+                "catalogue_digest": "sha256:3d680af294507bcac03df5d3eb4c28c4c2c74e34413444db7609c75d20d58694",
                 "manifest_digest": "sha256:13936900135adfc54914f84eca8f25d90cab72052fbfe48133eed48c3b22f3c4",
                 "plugin_digest": plugin_digest,
                 "upstream_repository": "https://github.com/umami-software/umami",
