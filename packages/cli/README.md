@@ -42,6 +42,7 @@ therefore requires `--yes` for destructive operations.
 ```text
 sprout auth login|logout|status
 sprout org list|use
+sprout region list
 sprout project list|get|create|update|delete
 sprout env list|set|unset
 sprout service list|create|get|delete
@@ -53,6 +54,21 @@ sprout api <method> <path>
 sprout template resolve|apply|verify
 ```
 
+Creating a project requires an active region. Discover the values from the authenticated control
+plane instead of hard-coding one:
+
+```shell
+sprout region list
+sprout project create --name my-site --region us-east-1 --blank
+```
+
+`project create` leaves repository visibility, root directory, and Dockerfile path out of the
+request unless you specify them. That preserves the signed App Store listing or server defaults.
+Use `--store <listing-id>` to install a listing, optionally with `--owner`, `--repository-name`,
+`--private`/`--public`, and `--template-input-file <json-or->`. Template inputs are accepted only
+for signed App Store listings; `-` reads the JSON array from stdin without putting secret values in
+the process arguments.
+
 `sprout api` accepts only a relative path beginning with `/`; absolute and scheme-relative URLs are
 rejected before the stored bearer credential is read. This prevents an arbitrary host from being
 used as a credential-exfiltration target.
@@ -62,6 +78,13 @@ creation, and polling to `sprout-core`. Site and migration sources become determ
 without mutating the source tree. Android accepts one raw unsigned APK (or a directory containing
 exactly one such APK for Marketplace Action compatibility) and uploads its original bytes as
 `application/vnd.android.package-archive`.
+
+`sprout template resolve` reads one exact upstream commit from the authenticated, signed-catalogue
+resolution endpoint. `template verify` downloads that immutable digest and verifies its pinned
+Deployment-Templates keyless provenance. `template apply` additionally requires confirmation,
+checks that the workspace is a Git checkout, detects the fail-closed native isolation boundary
+before downloading plugin bytes, and applies only the signed structural request. `--input` may
+assert fields from that request but cannot override the imported catalogue snapshot.
 
 The legacy deploy environment `development` remains accepted as an alias for `preview`; both use
 the backend's collision-safe pull-request preview identity rules.

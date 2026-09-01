@@ -61,17 +61,12 @@ int main(void) {
   assert(setns(-1, CLONE_NEWUSER) == -1);
   assert(errno == EPERM);
 
-  /* A private network namespace is necessary but insufficient on its own. The socket may be
-     creatable, but it must have no route to caller, metadata, or internet services. */
+  /* No network descriptor is inherited, and sealed seccomp denies both socket creation
+     primitives even when the hosted kernel cannot configure a private network namespace. */
+  errno = 0;
   int socket_fd = socket(AF_INET, SOCK_STREAM, 0);
-  assert(socket_fd >= 0);
-  struct sockaddr_in address = {
-      .sin_family = AF_INET,
-      .sin_port = htons(80),
-      .sin_addr = {.s_addr = htonl(0xA9FEA9FE)}, /* 169.254.169.254 */
-  };
-  assert(connect(socket_fd, (struct sockaddr *)&address, sizeof(address)) == -1);
-  close(socket_fd);
+  assert(socket_fd == -1);
+  assert(errno == EPERM);
 
   static const char response[] =
       "{\"status\":\"ok\",\"protocol_version\":1,\"changes\":[{\"path\":\"allowed\","

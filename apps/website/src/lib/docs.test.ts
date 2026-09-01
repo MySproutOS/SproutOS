@@ -50,6 +50,8 @@ describe("the documentation", () => {
     expect(slugs).toContain("oauth-applications")
     expect(slugs).toContain("github-action")
     expect(slugs).toContain("object-storage")
+    expect(slugs).toContain("cli")
+    expect(slugs).toContain("android-distribution")
   })
 
   it("says the thing the docs exist to say", () => {
@@ -82,6 +84,21 @@ describe("the documentation", () => {
     expect(text).toContain("sandbox time or model usage")
     expect(text).not.toContain("sprout_os_deploy")
     expect(text).not.toContain("sproutos-apps")
+  })
+
+  it("documents required-region project creation and direct Android distribution", () => {
+    const cli = searchableText(docBySlug("cli")!)
+    const android = searchableText(docBySlug("android-distribution")!)
+
+    expect(cli).toContain("sprout region list")
+    expect(cli).toContain("--region us-east-1")
+    expect(cli).toContain("template-input-file")
+    expect(cli).toContain("preserves the source or signed app store listing defaults")
+    expect(android).toContain("does not publish google play tracks")
+    expect(android).toContain("raw unsigned apk")
+    expect(android).toContain("mobile mcp")
+    expect(android).toContain("updates in place")
+    expect(android).toContain("com.sproutos.store")
   })
 
   it("makes production migrations a customer-owned GitHub Actions dependency", () => {

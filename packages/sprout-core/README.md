@@ -13,11 +13,12 @@ Plugin execution is fail-closed: callers must supply an `IsolationProvider`. An 
 responsible for constructing an OS-contained command with no network access, only the workspace
 writable, and descendant-process containment. There is no public "run directly" fallback.
 
-`template resolve`, `template verify`, and `template apply` frontends must report the corresponding
-structured unavailable error until all three production providers are wired: the canonical
-catalogue resolver, a verifier for the pinned Deployment-Templates GitHub keyless provenance, and
-an OS isolation provider. A missing provider is not permission to download by tag, skip provenance,
-or launch the executable directly.
+`template resolve`, `template verify`, and `template apply` compose the authenticated catalogue
+resolver, the verifier for the pinned Deployment-Templates GitHub keyless provenance, and the OS
+isolation provider here. The native consumer repeats the exact repository, workflow, ref, source
+commit, digest, and protocol-identity checks after resolution. A missing provider returns its
+structured unavailable or rejected error; it is never permission to download by tag, skip
+provenance, or launch the executable directly.
 
 ## Native plugin isolation
 
@@ -28,14 +29,17 @@ remounted read-only, `.git` separately remounted read-only, every capability dro
 namespace syscalls denied after setup by a sealed classic-BPF filter consumed from one explicitly
 inherited descriptor. Docker's outer profile permits only Bubblewrap's argument-scoped setup
 calls; the inner filter is installed in both Bubblewrap's PID-namespace init and the plugin before
-plugin execution. macOS and Windows return `IsolationUnavailable`: the
-available macOS Seatbelt interface cannot both default-deny arbitrary credential mounts and launch
-a general native executable without a broader file-read exception, and Windows has no implemented
-provider. Hosts missing the Linux primitive are likewise unsupported; the plugin is never run
-without the full boundary.
+plugin execution. macOS uses Apple's deny-default `system.sb` runtime baseline, denies network,
+grants the exact verified-plugin and workspace reads, grants writes only below the workspace, and
+denies `.git` writes. Windows stages the checkout and verified executable into a per-run
+AppContainer ACL tree, launches with `SECURITY_CAPABILITIES` and no network capabilities, and
+attaches the child to a kill-on-close Job Object with CPU, memory, process-count, and time limits.
+Only validated declared changes are replayed into an unchanged source workspace; the profile and
+staged ACL tree are removed on exit. A host missing its complete native primitive is unsupported;
+the plugin is never run directly.
 
 The runner clears the environment, marks every non-stdio file descriptor close-on-exec, bounds
-stdout/stderr and runtime, kills the Unix process group on failure, and validates the declared
+stdout/stderr and runtime, kills the complete process tree on failure, and validates the declared
 before/after workspace diff.
 
 Before enabling catalogue plugins in production, the ECS worker image and task definition must be

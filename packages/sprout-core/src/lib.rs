@@ -10,6 +10,9 @@ mod package;
 mod plugin;
 mod provenance;
 mod resolve;
+mod template;
+#[cfg(windows)]
+mod windows_isolation;
 mod workspace;
 
 pub use api::{ApiClient, ApiClientConfig, ApiResponse};
@@ -32,5 +35,11 @@ pub use plugin::{
     ProtocolOutcome, TemplateProtocol,
 };
 pub use provenance::CosignProvenanceVerifier;
-pub use resolve::{CatalogueResolver, ResolvedTemplate, TemplateSelector};
+pub use resolve::{
+    ApiCatalogueResolver, CatalogueResolver, ResolvedTemplate, TemplateSelector,
+    validate_resolution,
+};
+pub use template::{
+    TemplateApplication, TemplateVerification, apply_template, resolve_template, verify_template,
+};
 pub use workspace::{ChangeKind, DeclaredChange, DiffLimits, WorkspaceChange};

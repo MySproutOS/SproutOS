@@ -65,15 +65,19 @@ export {
 } from "./deployment-catalogue"
 export {
   discoverCurrentDeploymentCatalogue,
+  DEPLOYMENT_CATALOGUE_REPOSITORY,
   DEPLOYMENT_CATALOGUE_RELEASE_API,
+  DEPLOYMENT_TEMPLATES_SIGNER_IDENTITY,
   DEPLOYMENT_TEMPLATES_REF,
   DEPLOYMENT_TEMPLATES_REPOSITORY,
   DEPLOYMENT_TEMPLATES_WORKFLOW_REF,
+  GITHUB_ACTIONS_OIDC_ISSUER,
 } from "./deployment-catalogue-oci"
 export {
   manifestDigestForCatalogueEntry,
   parseCatalogueAppManifest,
 } from "./deployment-catalogue-schema"
+export { catalogueTemplateApplyRequestFromManifest } from "./catalogue-template"
 export {
   validateCatalogueUserInputs,
   type ResolvedCatalogueInput,

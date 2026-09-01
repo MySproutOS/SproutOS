@@ -2,6 +2,43 @@
 // Metadata and search text only — safe to import from a client component.
 export const GENERATED_DOCS = [
   {
+    slug: "android-distribution",
+    title: "Distribute an Android app",
+    summary:
+      "Build an unsigned APK, let SproutOS protect the signing key, publish releases, and verify installs and updates.",
+    audience: "developer",
+    category: "Deploying",
+    order: 4,
+    headings: [
+      {
+        id: "keep-the-application-identity-stable",
+        level: 2,
+        title: "Keep the application identity stable",
+      },
+      {
+        id: "establish-protected-signing-custody",
+        level: 2,
+        title: "Establish protected signing custody",
+      },
+      {
+        id: "publish-from-github-actions",
+        level: 2,
+        title: "Publish from GitHub Actions",
+      },
+      {
+        id: "test-installation-and-updating",
+        level: 2,
+        title: "Test installation and updating",
+      },
+      {
+        id: "prepare-useful-listing-content",
+        level: 2,
+        title: "Prepare useful listing content",
+      },
+    ],
+    text: 'SproutOS distributes Android apps directly from the website. It does not publish Google Play tracks. A project uploads one raw unsigned APK; the on-premises signer produces the installable APK without exposing the app signing private key to a developer machine, GitHub Actions, or the control plane. Keep the application identity stable Choose the Android application id before the first production release and do not change it. Every update must use the same application id and signing identity, and its Android versionCode must be greater than the installed release. The SproutOS Android client uses com.sproutos.store . A different id is a different app to Android, so it cannot update an existing installation in place. Build a release APK that is deliberately unsigned. Do not upload an Android App Bundle ( .aab ), a ZIP containing an APK, or an APK already signed by a developer key. The CLI validates this boundary before uploading. Establish protected signing custody An authorized project owner runs the Android setup command once: sprout android setup my-android-app sprout android status my-android-app Setup creates or imports the project\'s signing identity through the protected signer. Treat this as a custody operation: back up any permitted recovery material according to your organization policy, restrict who can rotate it, and never commit keystores, passwords, or exported private keys. Before the first public release, record and independently compare the certificate fingerprint: sprout android verify my-android-app --commit <40-character-source-commit> The verified source commit, application id, signing-certificate digest, version code, and artifact digest form the release identity. A mismatch must fail closed; do not work around it by uninstalling the existing app or accepting a new key. Publish from GitHub Actions Build the unsigned APK, then pass the containing directory to the pinned Marketplace action: name: Publish Android app on: push: tags: ["android-v*"] permissions: contents: read id-token: write jobs: publish: runs-on: ubuntu-latest steps: - uses: actions/checkout@v5 - uses: actions/setup-java@v4 with: distribution: temurin java-version: "21" - uses: gradle/actions/setup-gradle@v4 - run: ./gradlew assembleRelease - uses: MySproutOS/sproutos-deploy-action@0d5ce8bb74ecd598ae996c34d7d2cb5ac156a180 with: preset: android directory: app/build/outputs/apk/release project: my-android-app api-url: https://api.sproutos.me The directory must contain exactly one APK. The action authenticates with GitHub OIDC and passes a short-lived, repository-bound token to the CLI; do not add a long-lived SproutOS secret. The same artifact can be deployed locally with: sprout deploy my-android-app --preset android \\ --path app/build/outputs/apk/release/app-release-unsigned.apk \\ --version-code 42 Test installation and updating Test the public user journey on a supported Android device or emulator before announcing a release: Open the SproutOS Android client and authenticate. Find the listing and check its title, summary, icon, screenshots, release version, download size, permissions, privacy/support links, and update notes. Install it from the website-backed catalogue and launch the installed application. Publish a higher versionCode , return to the listing, install the update, and confirm Android updates in place without changing the application id or losing app data. Compare the installed certificate digest and artifact digest with the release record, then verify failed or superseded releases cannot be downloaded as current. Exercise this flow with Mobile MCP in automated acceptance so tests interact with the same visible screens a user does. Shell-only APK installation can diagnose a build, but it does not prove authentication, catalogue discovery, listing content, download authorization, installer handoff, launch, or update behavior. If Android blocks the install, enable permission for the browser or SproutOS client to install unknown apps and retry. Do not disable Android package verification. If an update reports a signing conflict, stop: either the application id or protected signing identity changed. Prepare useful listing content A launch-ready listing needs more than an APK. Provide a concise name and summary, an accurate full description, a high-resolution icon, phone screenshots from the actual release, support and privacy URLs, release notes, and explicit content/permission disclosures. Describe what the app does and what data leaves the device; do not make claims the release cannot demonstrate. Keep the listing tied to the same immutable source commit and artifact digest shown by release verification. Test every link and screenshot at phone width, and repeat the full install/update journey after changing signing, download authorization, catalogue metadata, or Android client code.',
+  },
+  {
     slug: "background-workers",
     title: "Background workers and open connections",
     summary: "Return after each batch so idle connections do not keep consuming compute.",
@@ -52,6 +89,43 @@ export const GENERATED_DOCS = [
       },
     ],
     text: "Usage and credit Usage is recorded in an append-only ledger and grouped by service. Line items retain sub-cent precision; spendable credit is displayed in cents. SproutOS is prepaid: new work is refused once spendable credit is exhausted, delayed usage is capped at the available credit when posted, and provider-backed work cannot settle past the credit available after its reservation is released. Queue residency Queue residency is queued payload bytes multiplied by how long they remain queued. It is storage over time, not a count of jobs and not ordinary cache usage. Object storage Mutable object storage records write and list requests, read requests, bytes delivered outside AWS, and stored byte-time. Deletes are free. These dimensions have no SproutOS markup. Spendable credit includes a protected reserve for 48 hours of the latest measured object-storage bytes. When credit reaches that floor, new service requests stop while the funded retention window preserves the stored data. Adding credit clears the cutoff. Platform fees Dimensions without an item-specific override use the standard 12% platform fee. Postgres compute has a 2% fee. Postgres storage, sandbox resources and egress, platform-funded AI, and operational agent duration use 0%; user-funded AI is recorded as externally charged rather than billed again. Payment processing is passed through separately.",
+  },
+  {
+    slug: "cli",
+    title: "Use the SproutOS CLI",
+    summary:
+      "Sign in, choose an organization and region, create projects, configure services, and deploy from one command-line client.",
+    audience: "user",
+    category: "Getting started",
+    order: 2,
+    headings: [
+      {
+        id: "sign-in-and-choose-an-organization",
+        level: 2,
+        title: "Sign in and choose an organization",
+      },
+      {
+        id: "create-a-project-in-an-available-region",
+        level: 2,
+        title: "Create a project in an available region",
+      },
+      {
+        id: "install-from-the-app-store",
+        level: 2,
+        title: "Install from the App Store",
+      },
+      {
+        id: "configure-and-deploy",
+        level: 2,
+        title: "Configure and deploy",
+      },
+      {
+        id: "manage-updates-and-groups",
+        level: 2,
+        title: "Manage updates and groups",
+      },
+    ],
+    text: 'The sprout CLI is the command-line client for SproutOS. It uses the same project and deployment contract as the dashboard and the GitHub Action. Sign in and choose an organization Install a checksummed binary from the SproutOS GitHub release, then sign in: sprout auth login sprout org list sprout org use my-team Browser login uses PKCE. The resulting credential is stored in your operating system credential store, not a plaintext configuration file. For a trusted headless environment, use SPROUTOS_TOKEN ; never put that value in a repository or command-line argument. Add --json to get one stable JSON document for scripts and coding agents. Destructive commands require an interactive confirmation, or --yes ; JSON mode never prompts. Create a project in an available region A region is required when a project is created. Ask the active control plane for the current list, then pass one of its exact codes: sprout region list sprout project create --name my-site --region us-east-1 --blank Do not copy a region from an old example without checking region list : availability is a control-plane decision. A blank project is private or public according to the server default unless you pass --private or --public . You can also attach an existing repository: sprout project create --name my-site --region us-east-1 \\ --repository-id 01900000-0000-7000-8000-000000000000 For a repository GitHub cannot identify as a fork, add --upstream owner/repository . Root directory and Dockerfile overrides are optional. Leaving them out preserves the source or signed App Store listing defaults. Install from the App Store Copy a listing id from the SproutOS App Store and create its project: sprout project create --name analytics --region us-east-1 \\ --store 01900000-0000-7000-8000-000000000000 \\ --owner my-github-account --repository-name analytics The platform resolves an exact signed catalogue commit and immutable plugin digest. It creates the destination repository and services; it does not execute instructions discovered in the upstream repository. Some listings declare setup inputs. Download or create a JSON array matching the fields shown by the listing, then pass its file: [ { "key": "databasePassword", "value": "replace-me", "secret": true }, { "key": "port", "value": 3000, "secret": false } ] sprout project create --name analytics --region us-east-1 \\ --store 01900000-0000-7000-8000-000000000000 \\ --template-input-file ./template-inputs.json Use --template-input-file - to read the array from stdin. This keeps secret values out of shell history and the process list. Inputs cannot override the signed template\'s declared structure. Configure and deploy Use environment and service commands after the project exists: sprout env set my-site DATABASE_URL --stdin sprout service list --project my-site sprout deploy my-site --preset next --path .next/standalone sprout deployment list --project my-site sprout logs my-site The CLI packages output deterministically, negotiates the upload, creates a release, and waits for a terminal deployment result. The static , web , next , hono , and android presets share this release path. Production database migrations remain a customer-owned GitHub Actions step; see /docs/database-migrations Run database migrations . Manage updates and groups App Store and upstream-backed projects can ask SproutOS to open reviewed update pull requests: sprout project update analytics --auto-update \\ --auto-update-cadence one_month --auto-update-mode suggest Use --auto-update-mode auto_merge only when reviewed pull requests should merge automatically after all platform and repository checks pass. A logical group can be created with --group ; add a child using --parent-project <group-id> and select its customer-facing project with --primary-child <child-id> on the group. Run sprout --help or sprout <command> --help for the complete current flag set. The major command groups are auth , org , region , project , env , service , deploy , deployment , logs , android , api , and template .',
   },
   {
     slug: "connecting",

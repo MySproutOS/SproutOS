@@ -5,6 +5,9 @@
 
 use std::path::Path;
 
+#[cfg(target_os = "macos")]
+use std::path::PathBuf;
+
 #[cfg(target_os = "linux")]
 use std::{
     fs,
@@ -13,7 +16,7 @@ use std::{
     path::PathBuf,
 };
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 use tokio::process::Command;
 
 use crate::{IsolatedCommand, IsolationProvider, Result, SproutError, VerifiedExecutable};
@@ -28,6 +31,10 @@ pub struct NativeIsolationProvider {
 enum Backend {
     #[cfg(target_os = "linux")]
     Linux { bubblewrap: PathBuf },
+    #[cfg(target_os = "macos")]
+    MacOs { sandbox_exec: PathBuf },
+    #[cfg(windows)]
+    WindowsAppContainer,
 }
 
 impl NativeIsolationProvider {
@@ -44,12 +51,23 @@ impl NativeIsolationProvider {
                 backend: Backend::Linux { bubblewrap },
             })
         }
-        #[cfg(not(target_os = "linux"))]
+        #[cfg(target_os = "macos")]
         {
-            Err(SproutError::IsolationUnavailable(format!(
-                "native plugin isolation is not implemented for {}",
-                std::env::consts::OS
-            )))
+            let sandbox_exec = PathBuf::from("/usr/bin/sandbox-exec");
+            if !sandbox_exec.is_file() {
+                return Err(SproutError::IsolationUnavailable(
+                    "trusted macOS sandbox-exec was not found".into(),
+                ));
+            }
+            Ok(Self {
+                backend: Backend::MacOs { sandbox_exec },
+            })
+        }
+        #[cfg(windows)]
+        {
+            Ok(Self {
+                backend: Backend::WindowsAppContainer,
+            })
         }
     }
 }
@@ -75,19 +93,60 @@ impl IsolationProvider for NativeIsolationProvider {
                 "plugin workspace is not a directory".into(),
             ));
         }
-        #[cfg(not(target_os = "linux"))]
-        let _ = (&executable, &workspace);
-
         match &self.backend {
             #[cfg(target_os = "linux")]
             Backend::Linux { bubblewrap } => linux_command(bubblewrap, &executable, &workspace),
-            #[cfg(not(target_os = "linux"))]
-            _ => Err(SproutError::IsolationUnavailable(format!(
-                "native plugin isolation is not implemented for {}",
-                std::env::consts::OS
-            ))),
+            #[cfg(target_os = "macos")]
+            Backend::MacOs { sandbox_exec } => macos_command(sandbox_exec, &executable, &workspace),
+            #[cfg(windows)]
+            Backend::WindowsAppContainer => Ok(IsolatedCommand::appcontainer(
+                crate::windows_isolation::WindowsAppContainerCommand::stage(
+                    &executable,
+                    &workspace,
+                )?,
+            )),
         }
     }
+}
+
+#[cfg(target_os = "macos")]
+fn macos_command(
+    sandbox_exec: &Path,
+    executable: &Path,
+    workspace: &Path,
+) -> Result<IsolatedCommand> {
+    let quote = |path: &Path| {
+        path.to_str()
+            .ok_or_else(|| {
+                SproutError::IsolationUnavailable("macOS sandbox paths must be UTF-8".into())
+            })
+            .map(|value| value.replace('\\', "\\\\").replace('"', "\\\""))
+    };
+    let executable_path = quote(executable)?;
+    let plugin_directory = quote(executable.parent().ok_or_else(|| {
+        SproutError::IsolationUnavailable("plugin has no parent directory".into())
+    })?)?;
+    let workspace = quote(workspace)?;
+    let git = format!("{workspace}/.git");
+    // Apple's system.sb is the OS-owned minimal runtime policy: dyld shared caches, libSystem,
+    // required syscalls, read-metadata traversal, and an enumerated set of bootstrap services.
+    // It does not grant home-directory reads. Our explicit deny keeps even its syslog socket from
+    // becoming a network escape, and the only mutable tree is the selected workspace minus .git.
+    let profile = format!(
+        r#"(version 1)
+(deny default)
+(import "system.sb")
+(deny network*)
+(allow process*)
+(allow file-read-metadata)
+(allow file-read* file-map-executable (subpath "{plugin_directory}"))
+(allow file-read* (subpath "{workspace}"))
+(allow file-write* (subpath "{workspace}"))
+(deny file-write* (subpath "{git}"))"#
+    );
+    let mut command = Command::new(sandbox_exec);
+    command.args(["-p", &profile, "--", &executable_path]);
+    Ok(IsolatedCommand::new(command))
 }
 
 #[cfg(target_os = "linux")]
@@ -125,6 +184,10 @@ fn linux_command(
         "--die-with-parent",
         "--new-session",
         "--unshare-all",
+        // Hosted kernels can permit an unprivileged user namespace while forbidding loopback
+        // configuration in a new network namespace. Share it here and deny both socket creation
+        // primitives in the sealed child seccomp policy; no network descriptor is inherited.
+        "--share-net",
         "--unshare-user",
         "--unshare-pid",
         "--cap-drop",
@@ -295,6 +358,8 @@ fn plugin_seccomp_program() -> Vec<u8> {
         libc::SYS_clone3,
         libc::SYS_unshare,
         libc::SYS_setns,
+        libc::SYS_socket,
+        libc::SYS_socketpair,
     ] {
         instructions.push(Instruction {
             code: BPF_JMP_JEQ_K,
@@ -420,24 +485,15 @@ fn read_u64(bytes: &[u8], offset: usize) -> Result<u64> {
     Ok(u64::from_le_bytes(raw))
 }
 
-#[cfg(test)]
+#[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
 mod tests {
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     use std::fs;
 
     #[cfg(target_os = "linux")]
     use std::os::unix::fs::PermissionsExt;
 
     use super::*;
-
-    #[cfg(not(target_os = "linux"))]
-    #[test]
-    fn native_provider_is_explicitly_unsupported() {
-        assert!(matches!(
-            NativeIsolationProvider::detect(),
-            Err(SproutError::IsolationUnavailable(_))
-        ));
-    }
 
     #[cfg(target_os = "linux")]
     #[test]
@@ -490,6 +546,7 @@ mod tests {
             .map(|arg| arg.to_string_lossy().into_owned())
             .collect::<Vec<_>>();
         assert!(args.iter().any(|arg| arg == "--unshare-all"));
+        assert!(args.iter().any(|arg| arg == "--share-net"));
         assert!(args.iter().any(|arg| arg == "--unshare-user"));
         assert!(args.iter().any(|arg| arg == "--unshare-pid"));
         assert!(!args.iter().any(|arg| arg == "--disable-userns"));
@@ -515,7 +572,7 @@ mod tests {
 
     #[cfg(target_os = "linux")]
     #[test]
-    fn plugin_seccomp_filter_is_sealed_and_denies_namespace_syscalls() {
+    fn plugin_seccomp_filter_is_sealed_and_denies_namespace_and_network_syscalls() {
         let descriptor = plugin_seccomp_filter().unwrap();
         let seals = unsafe { libc::fcntl(descriptor.as_raw_fd(), libc::F_GET_SEALS) };
         assert_eq!(
@@ -541,6 +598,8 @@ mod tests {
             libc::SYS_clone3,
             libc::SYS_unshare,
             libc::SYS_setns,
+            libc::SYS_socket,
+            libc::SYS_socketpair,
         ] {
             assert!(bytes.chunks_exact(8).any(|instruction| {
                 u16::from_ne_bytes([instruction[0], instruction[1]]) == 0x15
@@ -655,6 +714,129 @@ mod tests {
             .map(|arg| arg.to_string_lossy().into_owned())
             .collect::<Vec<_>>();
         assert!(!args.iter().any(|arg| arg == "/workspace/.git"));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[tokio::test]
+    async fn macos_profile_denies_credentials_network_and_git_but_allows_workspace() {
+        use std::{net::TcpListener, process::Command as StdCommand};
+
+        let root = tempfile::tempdir().unwrap();
+        let workspace = root.path().join("workspace");
+        let plugin_dir = root.path().join("plugin");
+        fs::create_dir(&workspace).unwrap();
+        fs::create_dir(workspace.join(".git")).unwrap();
+        fs::create_dir(&plugin_dir).unwrap();
+        let credential = root.path().join("credential");
+        let outside_write = root.path().join("outside-write");
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let listener_port = listener.local_addr().unwrap().port();
+        fs::write(&credential, b"secret").unwrap();
+        let source = plugin_dir.join("probe.c");
+        let plugin = plugin_dir.join("plugin");
+        let credential = credential.to_str().unwrap();
+        let outside_write = outside_write.to_str().unwrap();
+        fs::write(
+            &source,
+            format!(
+                r#"#include <fcntl.h>
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
+#include <unistd.h>
+int main(void) {{
+ int out=open("allowed",O_CREAT|O_WRONLY,0600); if(out<0||write(out,"ok",2)!=2)return 10;
+ if(open(".git/denied",O_CREAT|O_WRONLY,0600)>=0)return 11;
+ if(open("{credential}",O_RDONLY)>=0)return 12;
+ if(open("{outside_write}",O_CREAT|O_WRONLY,0600)>=0)return 13;
+ int s=socket(AF_INET,SOCK_STREAM,0); struct sockaddr_in a={{.sin_family=AF_INET,.sin_port=htons({listener_port}),.sin_addr={{.s_addr=htonl(INADDR_LOOPBACK)}}}};
+ if(s>=0&&connect(s,(struct sockaddr*)&a,sizeof(a))==0)return 14; return 0;
+}}"#
+            ),
+        )
+        .unwrap();
+        let compile = StdCommand::new("/usr/bin/cc")
+            .args([source.as_os_str(), "-o".as_ref(), plugin.as_os_str()])
+            .output()
+            .unwrap();
+        assert!(
+            compile.status.success(),
+            "{}",
+            String::from_utf8_lossy(&compile.stderr)
+        );
+        let executable = VerifiedExecutable::for_test(plugin);
+        let provider = NativeIsolationProvider::detect().unwrap();
+        let mut command = provider.command(&executable, &workspace).unwrap();
+        command.command_mut().current_dir(&workspace).env_clear();
+        let output = command.command_mut().output().await.unwrap();
+        assert!(
+            output.status.success(),
+            "sandbox probe exited {}",
+            output.status
+        );
+        assert_eq!(fs::read(workspace.join("allowed")).unwrap(), b"ok");
+        assert!(!workspace.join(".git/denied").exists());
+        assert!(!Path::new(outside_write).exists());
+    }
+
+    #[cfg(target_os = "macos")]
+    #[tokio::test]
+    async fn macos_deadline_kills_the_complete_sandboxed_child_tree() {
+        use std::process::Command as StdCommand;
+
+        struct TimeoutProtocol;
+        impl crate::TemplateProtocol<()> for TimeoutProtocol {
+            fn encode_request(&self, _: &()) -> Result<Vec<u8>> {
+                Ok(vec![0])
+            }
+
+            fn decode_response(&self, _: &[u8]) -> Result<crate::ProtocolOutcome> {
+                unreachable!("the timeout probe never returns a protocol response")
+            }
+        }
+
+        let root = tempfile::tempdir().unwrap();
+        let workspace = root.path().join("workspace");
+        let plugin_dir = root.path().join("plugin");
+        fs::create_dir(&workspace).unwrap();
+        fs::create_dir(&plugin_dir).unwrap();
+        let source = plugin_dir.join("probe.c");
+        let plugin = plugin_dir.join("plugin");
+        fs::write(
+            &source,
+            r#"#include <fcntl.h>
+#include <unistd.h>
+int main(void) {
+ char request; if(read(0,&request,1)!=1)return 10;
+ pid_t child=fork(); if(child<0)return 11;
+ if(child==0){sleep(2);int out=open("descendant",O_CREAT|O_WRONLY,0600);if(out>=0)write(out,"bad",3);return 0;}
+ sleep(10); return 0;
+}"#,
+        )
+        .unwrap();
+        let compile = StdCommand::new("/usr/bin/cc")
+            .args([source.as_os_str(), "-o".as_ref(), plugin.as_os_str()])
+            .output()
+            .unwrap();
+        assert!(
+            compile.status.success(),
+            "{}",
+            String::from_utf8_lossy(&compile.stderr)
+        );
+        let executable = VerifiedExecutable::for_test(plugin);
+        let error = crate::PluginRunner::new(
+            NativeIsolationProvider::detect().unwrap(),
+            crate::ApplyLimits {
+                timeout: std::time::Duration::from_millis(500),
+                ..crate::ApplyLimits::default()
+            },
+        )
+        .apply(&executable, &workspace, &TimeoutProtocol, &())
+        .await
+        .unwrap_err();
+        assert_eq!(error.code(), crate::ErrorCode::PluginTimeout);
+        tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+        assert!(!workspace.join("descendant").exists());
     }
 
     /// Compile `tests/fixtures/linux_isolation_probe.c` as a static executable and set

@@ -30,6 +30,7 @@ import roles from "./roles"
 import services from "./services"
 import serviceDatabaseBranches from "./service-database-branches"
 import store, { storeModeration } from "./store"
+import templates from "./templates"
 import apiKeys from "./api-keys"
 import observability from "./observability"
 import otlp from "./otlp"
@@ -158,6 +159,7 @@ app.route("/orgs", orgs)
 */
 app.route("/regions", regions)
 app.route("/store", store)
+app.route("/templates", templates)
 app.route("/user", user)
 app.route("/", unauthenticated)
 

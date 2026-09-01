@@ -70,11 +70,23 @@ struct EntryState {
     hard_link_count: u64,
 }
 
+#[derive(Debug)]
 pub(crate) struct WorkspaceSnapshot {
     entries: BTreeMap<String, EntryState>,
+    directory_modes: BTreeMap<String, u32>,
 }
 
 impl WorkspaceSnapshot {
+    #[cfg(windows)]
+    pub(crate) fn require_unchanged(&self, other: &Self) -> Result<()> {
+        if self.entries != other.entries || self.directory_modes != other.directory_modes {
+            return Err(SproutError::WorkspaceRejected {
+                path: PathBuf::new(),
+                reason: "workspace changed concurrently during AppContainer execution".into(),
+            });
+        }
+        Ok(())
+    }
     pub(crate) fn capture(root: &Path, limits: DiffLimits) -> Result<Self> {
         let metadata = std::fs::symlink_metadata(root).map_err(|source| SproutError::Io {
             operation: "inspect template workspace",
@@ -88,13 +100,15 @@ impl WorkspaceSnapshot {
         }
 
         let mut entries = BTreeMap::new();
+        let mut directory_modes = BTreeMap::new();
+        directory_modes.insert(String::new(), directory_mode(&metadata));
         let mut total_bytes = 0_u64;
         for entry in WalkDir::new(root).follow_links(false).sort_by_file_name() {
             let entry = entry.map_err(|error| SproutError::WorkspaceRejected {
                 path: error.path().unwrap_or(root).to_owned(),
                 reason: error.to_string(),
             })?;
-            if entry.depth() == 0 || entry.file_type().is_dir() {
+            if entry.depth() == 0 {
                 continue;
             }
             let relative =
@@ -111,6 +125,10 @@ impl WorkspaceSnapshot {
                     operation: "inspect workspace entry",
                     source,
                 })?;
+            if entry.file_type().is_dir() {
+                directory_modes.insert(normalized, directory_mode(&metadata));
+                continue;
+            }
             let (kind, bytes) = if metadata.file_type().is_symlink() {
                 let target =
                     std::fs::read_link(entry.path()).map_err(|source| SproutError::Io {
@@ -170,7 +188,10 @@ impl WorkspaceSnapshot {
                 },
             );
         }
-        Ok(Self { entries })
+        Ok(Self {
+            entries,
+            directory_modes,
+        })
     }
 
     /// Rejects files whose inode is also reachable outside the workspace before plugin execution.
@@ -199,6 +220,36 @@ impl WorkspaceSnapshot {
         declared: &[DeclaredChange],
         limits: DiffLimits,
     ) -> Result<Vec<WorkspaceChange>> {
+        for (path, before_mode) in &self.directory_modes {
+            let display_path = if path.is_empty() {
+                PathBuf::from(".")
+            } else {
+                PathBuf::from(path)
+            };
+            match after.directory_modes.get(path) {
+                None => {
+                    return Err(SproutError::WorkspaceRejected {
+                        path: display_path,
+                        reason: "template plugins may not remove existing directories".into(),
+                    });
+                }
+                Some(after_mode) if before_mode != after_mode => {
+                    return Err(SproutError::WorkspaceRejected {
+                        path: display_path,
+                        reason: "template plugins may not change directory permissions".into(),
+                    });
+                }
+                Some(_) => {}
+            }
+        }
+        for (path, mode) in &after.directory_modes {
+            if !self.directory_modes.contains_key(path) && mode & 0o7022 != 0 {
+                return Err(SproutError::WorkspaceRejected {
+                    path: PathBuf::from(path),
+                    reason: "template-created directories may not be writable by group or other users or have special permission bits".into(),
+                });
+            }
+        }
         let paths: BTreeSet<_> = self
             .entries
             .keys()
@@ -367,7 +418,14 @@ fn normalize_relative_path(path: &Path) -> Result<String> {
     let mut parts = Vec::new();
     for component in path.components() {
         match component {
-            Component::Normal(part) => parts.push(part.to_string_lossy().into_owned()),
+            Component::Normal(part) => {
+                let part = part.to_str().ok_or_else(|| {
+                    SproutError::DiffMismatch(
+                        "workspace paths must contain only valid UTF-8 components".into(),
+                    )
+                })?;
+                parts.push(part.to_owned());
+            }
             _ => {
                 return Err(SproutError::DiffMismatch(format!(
                     "path is not normalized: {}",
@@ -377,6 +435,17 @@ fn normalize_relative_path(path: &Path) -> Result<String> {
         }
     }
     Ok(parts.join("/"))
+}
+
+#[cfg(unix)]
+fn directory_mode(metadata: &std::fs::Metadata) -> u32 {
+    use std::os::unix::fs::PermissionsExt;
+    metadata.permissions().mode() & 0o7777
+}
+
+#[cfg(not(unix))]
+fn directory_mode(_metadata: &std::fs::Metadata) -> u32 {
+    0
 }
 
 #[cfg(unix)]
@@ -537,5 +606,80 @@ mod tests {
                 .validate_diff(&after, &[], DiffLimits::default())
                 .is_err()
         );
+    }
+
+    // macOS rejects these byte sequences at file creation; Linux accepts them and exercises the
+    // fail-closed snapshot path without relying on lossy path conversion.
+    #[cfg(all(unix, not(target_os = "macos")))]
+    #[test]
+    fn non_utf8_workspace_component_is_rejected_without_lossy_collisions() {
+        use std::{ffi::OsString, os::unix::ffi::OsStringExt};
+
+        let root = tempdir().unwrap();
+        fs::write(
+            root.path().join(OsString::from_vec(vec![b'f', 0x80])),
+            b"one",
+        )
+        .unwrap();
+        fs::write(
+            root.path().join(OsString::from_vec(vec![b'f', 0x81])),
+            b"two",
+        )
+        .unwrap();
+        let error = WorkspaceSnapshot::capture(root.path(), DiffLimits::default()).unwrap_err();
+        assert!(error.to_string().contains("valid UTF-8"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn directory_permission_changes_are_rejected() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root = tempdir().unwrap();
+        fs::create_dir(root.path().join("existing")).unwrap();
+        let before = WorkspaceSnapshot::capture(root.path(), DiffLimits::default()).unwrap();
+        fs::set_permissions(
+            root.path().join("existing"),
+            fs::Permissions::from_mode(0o700),
+        )
+        .unwrap();
+        let after = WorkspaceSnapshot::capture(root.path(), DiffLimits::default()).unwrap();
+        let error = before
+            .validate_diff(&after, &[], DiffLimits::default())
+            .unwrap_err();
+        assert!(error.to_string().contains("directory permissions"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unsafe_created_directory_permissions_are_rejected() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root = tempdir().unwrap();
+        let before = WorkspaceSnapshot::capture(root.path(), DiffLimits::default()).unwrap();
+        fs::create_dir(root.path().join("unsafe")).unwrap();
+        fs::set_permissions(
+            root.path().join("unsafe"),
+            fs::Permissions::from_mode(0o777),
+        )
+        .unwrap();
+        let after = WorkspaceSnapshot::capture(root.path(), DiffLimits::default()).unwrap();
+        let error = before
+            .validate_diff(&after, &[], DiffLimits::default())
+            .unwrap_err();
+        assert!(error.to_string().contains("template-created directories"));
+    }
+
+    #[test]
+    fn removing_an_existing_empty_directory_is_rejected() {
+        let root = tempdir().unwrap();
+        fs::create_dir(root.path().join("existing")).unwrap();
+        let before = WorkspaceSnapshot::capture(root.path(), DiffLimits::default()).unwrap();
+        fs::remove_dir(root.path().join("existing")).unwrap();
+        let after = WorkspaceSnapshot::capture(root.path(), DiffLimits::default()).unwrap();
+        let error = before
+            .validate_diff(&after, &[], DiffLimits::default())
+            .unwrap_err();
+        assert!(error.to_string().contains("remove existing directories"));
     }
 }
