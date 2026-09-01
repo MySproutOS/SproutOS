@@ -166,7 +166,10 @@ describe.skipIf(!reachable)("refreshCreditStates", () => {
   it("publishes exhausted and actively clears a funded organization's stale refusal", async () => {
     await valkey.set(`credit:${fundedId}`, "exhausted", "EX", 900)
 
-    await refreshCreditStates({ valkey })(job, context)
+    await refreshCreditStates({
+      valkey,
+      organizationIds: [fundedId, exhaustedId, reservedId],
+    })(job, context)
 
     expect(await readCreditState(valkey, fundedId)).toBeUndefined()
     expect(await readCreditState(valkey, exhaustedId)).toBe("exhausted")
