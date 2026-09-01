@@ -1217,8 +1217,6 @@ export type GetV1OrgsByOrgSlugProjectsResponses = {
       productionBranch: string
       autoUpdateEnabled: boolean
       autoUpdateCadence:
-        | "one_day"
-        | "two_days"
         | "one_week"
         | "one_month"
         | "three_months"
@@ -1273,8 +1271,6 @@ export type PostV1OrgsByOrgSlugProjectsData = {
     agentCredentialId?: string | null
     autoUpdateEnabled?: boolean
     autoUpdateCadence?:
-      | "one_day"
-      | "two_days"
       | "one_week"
       | "one_month"
       | "three_months"
@@ -1282,6 +1278,7 @@ export type PostV1OrgsByOrgSlugProjectsData = {
       | "nine_months"
       | "one_year"
       | "two_years"
+    syncUpstreamNow?: boolean
     scaleMode?: "cold" | "warm"
     autoUpdateMode?: "suggest" | "auto_merge"
     idempotencyKey?: string
@@ -1312,6 +1309,7 @@ export type PostV1OrgsByOrgSlugProjectsData = {
           type: "repository"
           repositoryId?: string
           githubRepoId?: string
+          upstreamFullName?: string
         }
   }
   path: {
@@ -1361,8 +1359,6 @@ export type PostV1OrgsByOrgSlugProjectsResponses = {
       productionBranch: string
       autoUpdateEnabled: boolean
       autoUpdateCadence:
-        | "one_day"
-        | "two_days"
         | "one_week"
         | "one_month"
         | "three_months"
@@ -1545,8 +1541,6 @@ export type GetV1OrgsByOrgSlugProjectsByProjectIdResponses = {
     productionBranch: string
     autoUpdateEnabled: boolean
     autoUpdateCadence:
-      | "one_day"
-      | "two_days"
       | "one_week"
       | "one_month"
       | "three_months"
@@ -1590,6 +1584,7 @@ export type GetV1OrgsByOrgSlugProjectsByProjectIdResponses = {
       isFork: boolean
       provenance: string
       upstreamFullName: string | null
+      upstreamStrategy: string | null
       githubInstallationId: string | null
       pendingCreation: boolean
       liveProjectCount: number
@@ -1614,8 +1609,6 @@ export type PatchV1OrgsByOrgSlugProjectsByProjectIdData = {
     agentCredentialId?: string | null
     autoUpdateEnabled?: boolean
     autoUpdateCadence?:
-      | "one_day"
-      | "two_days"
       | "one_week"
       | "one_month"
       | "three_months"
@@ -1676,8 +1669,6 @@ export type PatchV1OrgsByOrgSlugProjectsByProjectIdResponses = {
     productionBranch: string
     autoUpdateEnabled: boolean
     autoUpdateCadence:
-      | "one_day"
-      | "two_days"
       | "one_week"
       | "one_month"
       | "three_months"
@@ -2418,6 +2409,7 @@ export type GetV1OrgsByOrgSlugRepositoriesResponses = {
       isFork: boolean
       provenance: string
       upstreamFullName: string | null
+      upstreamStrategy: string | null
       githubInstallationId: string | null
       pendingCreation: boolean
       createdAt: Date

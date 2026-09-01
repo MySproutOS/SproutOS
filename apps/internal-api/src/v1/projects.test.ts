@@ -252,10 +252,13 @@ describe.skipIf(!reachable)("project routes", () => {
       expect(explicitNull.status).toBe(400)
     })
 
-    it("forks a store listing through the one project entry point", async () => {
+    it("copies a store listing into an unrelated repository through the project entry point", async () => {
       const response = await call("POST", `/v1/orgs/${orgA}/projects`, alice, {
         name: "Forked Fixture",
         source: { type: "store", storeListingId: listingId, ownerLogin: "acme-test" },
+        autoUpdateCadence: "nine_months",
+        autoUpdateMode: "auto_merge",
+        syncUpstreamNow: true,
       })
 
       expect(response.status).toBe(201)
@@ -269,11 +272,31 @@ describe.skipIf(!reachable)("project routes", () => {
       expect(project.slug).toBe("forked-fixture")
       expect(project.state).toBe("creating")
       expect(project.storeListingId).toBe(listingId)
-      expect(project.repositoryProvenance).toBe("fork")
+      expect(project.repositoryProvenance).toBe("copy")
+      expect(project.autoUpdateCadence).toBe("nine_months")
+      expect(project.autoUpdateMode).toBe("auto_merge")
 
-      expect(job.kind).toBe("fork")
+      expect(job.kind).toBe("provision")
       expect(job.state).toBe("queued")
       expect((job.steps as unknown[]).length).toBeGreaterThan(0)
+
+      const queued = await db
+        .selectFrom("projectJob")
+        .select("details")
+        .where("id", "=", job.id as string)
+        .executeTakeFirstOrThrow()
+      expect(queued.details).toEqual({ syncUpstreamNow: true })
+
+      const repository = await db
+        .selectFrom("repository")
+        .select(["isFork", "upstreamFullName", "upstreamStrategy"])
+        .where("id", "=", repositoryId)
+        .executeTakeFirstOrThrow()
+      expect(repository).toMatchObject({
+        isFork: false,
+        upstreamFullName: `example/forkable-${listingId.slice(-8)}`,
+        upstreamStrategy: "snapshot_copy",
+      })
 
       const install = await db
         .selectFrom("projectTemplateInstall")

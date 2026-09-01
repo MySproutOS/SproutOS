@@ -75,6 +75,7 @@ async function seed(options: { state?: "queued" | "running"; updatedAt?: Date } 
       provenance: "fork",
       isFork: true,
       upstreamFullName: "upstream/app",
+      upstreamStrategy: "github_fork",
       upstreamDefaultBranch: "main",
     })
     .execute()

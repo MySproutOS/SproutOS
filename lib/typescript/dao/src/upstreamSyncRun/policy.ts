@@ -20,8 +20,6 @@ export type UpkeepStatus = {
 }
 
 export type AutoUpdateCadence =
-  | "one_day"
-  | "two_days"
   | "one_week"
   | "one_month"
   | "three_months"
@@ -32,8 +30,6 @@ export type AutoUpdateCadence =
 
 const DAY_MS = 24 * 60 * 60 * 1000
 const CADENCE_MS: Record<AutoUpdateCadence, number> = {
-  one_day: DAY_MS,
-  two_days: 2 * DAY_MS,
   one_week: 7 * DAY_MS,
   one_month: 30 * DAY_MS,
   three_months: 90 * DAY_MS,

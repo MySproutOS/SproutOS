@@ -170,6 +170,7 @@ async function seed() {
       name: "astro-blog-starter",
       upstreamFullName: "withastro/astro",
       provenance: "fork",
+      upstreamStrategy: "github_fork",
     })
     .execute()
   created.push({ table: "repository", id: repoId })

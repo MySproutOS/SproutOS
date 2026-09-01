@@ -255,8 +255,6 @@ function ModifyForm({
               <Select
                 items={[
                   { label: "Off", value: "off" },
-                  { label: "1 day", value: "one_day" },
-                  { label: "2 days", value: "two_days" },
                   { label: "1 week", value: "one_week" },
                   { label: "1 month", value: "one_month" },
                   { label: "3 months", value: "three_months" },
@@ -276,8 +274,6 @@ function ModifyForm({
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="off">Off</SelectItem>
-                  <SelectItem value="one_day">1 day</SelectItem>
-                  <SelectItem value="two_days">2 days</SelectItem>
                   <SelectItem value="one_week">1 week</SelectItem>
                   <SelectItem value="one_month">1 month</SelectItem>
                   <SelectItem value="three_months">3 months</SelectItem>

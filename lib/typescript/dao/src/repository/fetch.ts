@@ -54,6 +54,7 @@ export function fetchRepository(db: Kysely<DB>) {
         "repository.isFork as isFork",
         "repository.provenance as provenance",
         "repository.upstreamFullName as upstreamFullName",
+        "repository.upstreamStrategy as upstreamStrategy",
         "repository.githubInstallationId as githubInstallationId",
         "repository.createdAt as createdAt",
       ])

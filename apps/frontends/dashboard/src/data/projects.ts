@@ -11,8 +11,6 @@ import {
 
 export type ProjectStatus = "ready" | "building" | "failed" | "sleeping"
 export type AutoUpdateCadence =
-  | "one_day"
-  | "two_days"
   | "one_week"
   | "one_month"
   | "three_months"

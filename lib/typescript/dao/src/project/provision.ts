@@ -27,6 +27,7 @@ export type RepositoryPlan =
       defaultBranch: string
       private: boolean
       isFork: boolean
+      upstreamStrategy?: "github_fork" | "snapshot_copy" | "manual" | null
       upstreamGithubRepoId?: string | null
       upstreamFullName?: string | null
       upstreamDefaultBranch?: string | null
@@ -54,6 +55,7 @@ export type ProvisionProjectInput = {
   autoUpdateEnabled: boolean
   autoUpdateCadence: string
   autoUpdateMode: string
+  syncUpstreamNow?: boolean
   storeListingId: string | null
   /** Signed catalogue snapshot consumed by the worker. Never reconstructed from a newer import. */
   templateInstall?: {
@@ -144,6 +146,7 @@ async function resolveRepository(
     upstreamGithubRepoId: input.repository.upstreamGithubRepoId ?? null,
     upstreamFullName: input.repository.upstreamFullName ?? null,
     upstreamDefaultBranch: input.repository.upstreamDefaultBranch ?? null,
+    upstreamStrategy: input.repository.upstreamStrategy ?? null,
     githubInstallationId: input.repository.githubInstallationId ?? null,
   })
 }
@@ -203,6 +206,7 @@ export function provisionProject(db: Kysely<DB>) {
         state: "queued",
         steps: JSON.stringify(initialSteps(input.jobKind)),
         idempotencyKey: input.idempotencyKey ?? null,
+        details: input.syncUpstreamNow === true ? { syncUpstreamNow: true } : {},
       })
 
       if (input.templateInstall !== undefined) {

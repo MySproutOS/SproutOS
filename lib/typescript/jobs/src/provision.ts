@@ -3,7 +3,6 @@ import {
   createOrganizationRepository,
   createPersonalRepository,
   forkRepository,
-  generateFromTemplate,
   GitHubApiError,
   getBranchHeadSha,
   getRepository,
@@ -27,6 +26,8 @@ import {
   transitionTemplateInstall,
   verifyUserInputsConfigured,
 } from "./catalogue-template"
+import { copyRepositorySnapshot } from "./repository-snapshot"
+import { enqueue } from "./queue"
 
 /**
  * What actually creates a customer's repository.
@@ -233,9 +234,9 @@ export async function runProvision(
     const template =
       job.projectId === null ? null : await catalogueTemplateContext(db, job.projectId)
 
-    async function forkAndPersist(): Promise<GitHubRepository> {
+    async function createOrLoadAndPersist(): Promise<GitHubRepository> {
       const created = isPendingGithubRepoId(repository.githubRepoId)
-        ? await createOnGitHub(client, usableCredential, job.kind, repository)
+        ? await createOnGitHub(client, usableCredential, repository)
         : await getRepository(client, usableCredential, repository.ownerLogin, repository.name)
       await db
         .updateTable("repository")
@@ -247,6 +248,19 @@ export async function runProvision(
         })
         .where("id", "=", repository.id)
         .execute()
+      if (repository.upstreamStrategy === "snapshot_copy") {
+        if (repository.upstreamFullName === null) {
+          throw new Error("snapshot copy has no upstream repository")
+        }
+        await copyRepositorySnapshot({
+          owner: created.ownerLogin,
+          repo: created.name,
+          branch: created.defaultBranch,
+          upstreamFullName: repository.upstreamFullName,
+          upstreamBranch: repository.upstreamDefaultBranch ?? "main",
+          token: usableCredential.token,
+        })
+      }
       await headShaWhenPopulated(
         client,
         usableCredential,
@@ -259,7 +273,7 @@ export async function runProvision(
     }
 
     if (template === null) {
-      await forkAndPersist()
+      await createOrLoadAndPersist()
     } else {
       await orchestrateCatalogueTemplate({
         transition: async (state) => {
@@ -281,7 +295,7 @@ export async function runProvision(
         provisionServices: async () => {
           await provisionServices(db, template, keepAlive)
         },
-        fork: forkAndPersist,
+        fork: createOrLoadAndPersist,
         prepareAndPush: async (preparedRepository) => {
           if (template.preparedCommitSha !== null) return
           const templateCredential =
@@ -398,6 +412,24 @@ export async function runProvision(
           userId: payload.userId,
         })
       }
+
+      const details =
+        typeof job.details === "object" && job.details !== null
+          ? (job.details as Record<string, unknown>)
+          : {}
+      if (details.syncUpstreamNow === true && repository.upstreamFullName !== null) {
+        await enqueue(db, {
+          kind: "upkeep.repository",
+          organizationId: repository.organizationId,
+          payload: {
+            repositoryId: repository.id,
+            ...(job.projectId === null ? {} : { requestedProjectId: job.projectId }),
+            requestedByUserId: payload.userId,
+          },
+          idempotencyKey: `upkeep.repository:${repository.id}:initial`,
+          maxAttempts: 2,
+        })
+      }
     }
   } catch (cause) {
     const message = cause instanceof Error ? cause.message : String(cause)
@@ -434,18 +466,16 @@ export async function runProvision(
 /**
  * The one GitHub call that differs per plan.
  *
- * `provenance` decides, not `kind`: a `provision` job whose repository records `template` has to
- * generate rather than create, and the two produce different histories — a template is one squashed
- * commit with no upstream, a fork tracks one. `repository.provenance` is what upkeep later reads to
- * decide whether tracking upstream means anything.
+ * The upstream strategy decides, not the job kind or acquisition provenance. A GitHub fork uses
+ * GitHub's fork endpoint; a snapshot copy creates an ordinary empty repository and seeds it with a
+ * one-commit tree snapshot; an imported repository is only loaded.
  */
 async function createOnGitHub(
   client: ReturnType<typeof createGitHubClient>,
   credential: GitHubCredential,
-  kind: string,
   repository: Selectable<DB["repository"]>,
 ): Promise<GitHubRepository> {
-  if (kind === "fork") {
+  if (repository.upstreamStrategy === "github_fork") {
     if (repository.upstreamFullName === null) throw new Error("fork job has no upstream repository")
     const [owner, repo] = repository.upstreamFullName.split("/")
     if (owner === undefined || repo === undefined) {
@@ -463,20 +493,6 @@ async function createOnGitHub(
     return await getRepository(client, credential, forked.ownerLogin, forked.name)
   }
 
-  if (repository.provenance === "template" && repository.upstreamFullName !== null) {
-    const [templateOwner, templateRepo] = repository.upstreamFullName.split("/")
-    if (templateOwner === undefined || templateRepo === undefined) {
-      throw new Error(`template "${repository.upstreamFullName}" is not owner/repo`)
-    }
-    return await generateFromTemplate(client, credential, {
-      templateOwner,
-      templateRepo,
-      name: repository.name,
-      owner: repository.ownerLogin,
-      private: repository.private,
-    })
-  }
-
   /*
     A personal account and an organization are different endpoints, and only one of them takes an
     installation token — `POST /user/repos` is `enabledForGitHubApps: false` (ADR 0005). Told apart
@@ -489,7 +505,11 @@ async function createOnGitHub(
     credential,
   })
 
-  const input = { name: repository.name, private: repository.private, autoInit: true }
+  const input = {
+    name: repository.name,
+    private: repository.private,
+    autoInit: repository.upstreamStrategy !== "snapshot_copy",
+  }
 
   return owner.data.type === "Organization"
     ? await createOrganizationRepository(client, credential, repository.ownerLogin, input)
@@ -499,11 +519,8 @@ async function createOnGitHub(
 /*
   A repository GitHub has created and not yet filled.
 
-  `generateFromTemplate` answers 201 with a complete-looking repository, and copies the template's
-  contents into it *afterwards* — the same asynchrony the fork path documents for its 202, which the
-  template path shares and nothing waited on. Reading the branch head in that window fails with
-  "Git Repository is empty", and the customer is shown a failed provision beside a repository on
-  GitHub that is perfectly fine seconds later.
+  Literal forks are asynchronous, while a snapshot copy is filled by the trusted worker immediately
+  after repository creation. Reading the branch head is the common completion boundary for both.
 
   Polled rather than slept: the wait is however long GitHub takes, and a fixed sleep is either a
   guess that is usually too long or one that is occasionally too short. Bounded, because a template

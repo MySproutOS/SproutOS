@@ -227,12 +227,27 @@ async function reconcileInDirectory(
     const aheadBy = Number(
       (await git(["rev-list", "--count", `${targetRoot}..${targetSha}`])).stdout,
     )
+    const targetTree = (await git(["show", "-s", "--format=%T", targetSha])).stdout.trim()
+    const upstreamTree = (await git(["show", "-s", "--format=%T", upstreamSha])).stdout.trim()
+
+    // An imported non-fork clone can already contain the entire upstream history. On its first
+    // reconciliation the inferred base is still the root, but identical tip trees mean there is
+    // nothing to propose and the current upstream SHA becomes the durable base for later runs.
+    if (targetTree === upstreamTree) {
+      return {
+        outcome: "up_to_date",
+        upstreamSha,
+        targetSha,
+        behindBy: 0,
+        aheadBy: 0,
+        changedFiles: [],
+      }
+    }
 
     if (behindBy === 0) {
       return { outcome: "up_to_date", upstreamSha, targetSha, behindBy, aheadBy, changedFiles: [] }
     }
 
-    const targetTree = (await git(["show", "-s", "--format=%T", targetSha])).stdout.trim()
     const targetDate = (await git(["show", "-s", "--format=%aI", targetSha])).stdout.trim()
     // Git 2.39 has the real ort-backed `merge-tree --write-tree`, but not 2.40's `--merge-base`
     // option. Give the target tree a temporary commit whose parent is the proven upstream base;
