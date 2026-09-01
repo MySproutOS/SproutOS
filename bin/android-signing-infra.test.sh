@@ -207,8 +207,8 @@ require 'android_signer_instance.last_seen_at' \
   'operators must be told where the durable signer heartbeat lives'
 require 'ANDROID_SIGNING_METRICS_ENABLED' "$WEB_TASK" \
   'the reviewed worker contract must activate the scheduled health sampler'
-require 'bin/handoff-ecs-task-definitions\.sh' "$ROOT/docs/android-signing-infrastructure.md" \
-  'stage two must explicitly deploy the registered task with the existing immutable pre-192 image'
+require 'bin/deploy-ecs-web\.sh' "$ROOT/docs/android-signing-infrastructure.md" \
+  'stage two must explicitly deploy the release task with the existing immutable pre-192 image'
 require 'ignore_changes.*task_definition' "$ROOT/docs/android-signing-infrastructure.md" \
   'the runbook must explain why applying the saved plan does not update the live ECS service'
 

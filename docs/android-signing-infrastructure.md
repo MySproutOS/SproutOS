@@ -180,8 +180,10 @@ bin/plan-android-custody-delivery.sh android-custody-delivery.tfplan \
 
 The wrapper uses SSM `DescribeParameters`, which returns metadata and never secret values, to prove
 that each exact signer name is a `SecureString`. It forces Google credential delivery off, passes
-the explicit signer enable variable to OpenTofu, saves the plan, and inspects both planned ECS JSON
-and the execution-role policy. Each token must occur once in only the API; the execution role must
+the explicit signer enable variable to OpenTofu, saves the plan, and inspects both the versioned
+release task contract and the planned execution-role policy. Application task definitions are
+release artifacts rather than OpenTofu resources, so the saved plan is expected to change IAM but
+not register an ECS task revision. Each token must occur once in only the API; the execution role must
 contain only their two exact `/sproutos/android-custody` ARNs; and the Google credential must occur
 nowhere. An ARN with a suffix such as `_extra` is not accepted. The wrapper never applies.
 
@@ -204,18 +206,30 @@ aws ecs describe-task-definition --task-definition "$CURRENT_TASK_DEFINITION" --
     '[.taskDefinition.containerDefinitions[] | select(.name == "website" or .name == "api" or .name == "worker") | .image] | length == 3 and all(. == $image)'
 ```
 
-Apply only the reviewed saved plan. This registers a new task contract, but both ECS services have
-`lifecycle.ignore_changes = [task_definition]`; the apply intentionally does **not** launch it. The
-stage-two handoff is therefore mandatory and must use the exact pre-#192 image captured above:
+Apply only the reviewed saved plan. It grants the execution role access to the two exact parameter
+ARNs but intentionally does **not** register or launch an application task. The stage-two handoff
+is therefore mandatory and must use the exact pre-#192 image captured above; it derives the service
+revision from the reviewed release contract. OpenTofu's ECS service has
+`ignore_changes = [task_definition]`, so applying the saved IAM plan cannot update the live service:
 
 ```bash
 tofu -chdir=tofu apply android-custody-delivery.tfplan
-IMAGE="$CURRENT_IMAGE" NAME_PREFIX=sproutos bin/handoff-ecs-task-definitions.sh
+HANDOFF_DIR=$(mktemp -d)
+trap 'rm -rf "$HANDOFF_DIR"' EXIT
+jq --arg image "$CURRENT_IMAGE" '.containerDefinitions |= map(.image = $image)' \
+  deploy/ecs/web-task-definition.json >"$HANDOFF_DIR/service.json"
+jq --arg image "$CURRENT_IMAGE" '.containerDefinitions |= map(.image = $image)' \
+  deploy/ecs/web-migrate-task-definition.json >"$HANDOFF_DIR/migrate.json"
+IMAGE="$CURRENT_IMAGE" NAME_PREFIX=sproutos \
+  SERVICE_TASK_DEFINITION_FILE="$HANDOFF_DIR/service.json" \
+  MIGRATION_TASK_DEFINITION_FILE="$HANDOFF_DIR/migrate.json" \
+  bin/deploy-ecs-web.sh
 ```
 
-The handoff derives new service and migration revisions from the exact task-definition outputs,
-runs the migration, waits for the two-replica web service and ACME worker to stabilize, and does not
-cut traffic between target-group colours. After it succeeds, inspect the live service revision—not
+The handoff registers new service and migration revisions from the versioned release contracts,
+runs the migration, waits for the two-replica web service to stabilize, and does not cut traffic
+between target-group colours. It does not touch the independent ACME service. After it succeeds,
+inspect the live service revision—not
 only the OpenTofu output—and require all of the following before merging #192:
 
 - all website, API, and worker containers still use `CURRENT_IMAGE`;

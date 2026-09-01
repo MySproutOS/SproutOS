@@ -101,6 +101,8 @@ if defect == "google-in-worker":
     })
 if defect == "token-extra-arn":
     containers[1]["secrets"][0]["valueFrom"] += "_extra"
+with open(os.environ["RELEASE_TASK_DEFINITION_FILE"], "w", encoding="utf-8") as output:
+    json.dump({"containerDefinitions": containers}, output)
 execution_policy = {
     "Version": "2012-10-17",
     "Statement": [{
@@ -119,10 +121,6 @@ if defect == "broad-execution-role":
 print(json.dumps({
     "resource_changes": [
         {
-            "address": "aws_ecs_task_definition.web",
-            "change": {"after": {"container_definitions": json.dumps(containers)}},
-        },
-        {
             "address": "aws_iam_role_policy.ecs_execution_secrets",
             "change": {"after": {"policy": json.dumps(execution_policy)}},
         },
@@ -139,6 +137,8 @@ export AWS_BIN="$WORK_DIR/aws"
 export TOFU_BIN="$WORK_DIR/tofu"
 export TOFU_CALLS="$WORK_DIR/tofu.calls"
 export AWS_PUT_CALLS="$WORK_DIR/aws-put.calls"
+export RELEASE_TASK_DEFINITION_FILE="$WORK_DIR/release-task.json"
+: >"$RELEASE_TASK_DEFINITION_FILE"
 
 cat >"$WORK_DIR/missing.env" <<'ENV'
 APK_SIGNER_TOKEN=runtime-only
