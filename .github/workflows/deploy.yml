@@ -426,6 +426,12 @@ jobs:
           tags: |
             ${{ steps.meta.outputs.image }}:${{ needs.release.outputs.version }}
             ${{ steps.meta.outputs.image }}:main
+          # This job builds the website again inside BuildKit. Values set on the earlier tarball
+          # build do not enter this Docker build, and Next bakes them into prerendered HTML.
+          build-args: |
+            NEXT_PUBLIC_ASSET_BASE=${{ vars.ASSET_BASE_URL }}
+            NEXT_PUBLIC_API_URL=${{ vars.NEXT_PUBLIC_API_URL || format('https://api.{0}', vars.CONTROL_PLANE_DOMAIN || 'sproutos.me') }}
+            NEXT_PUBLIC_HOST_URL=${{ vars.NEXT_PUBLIC_HOST_URL || format('https://{0}', vars.CONTROL_PLANE_DOMAIN || 'sproutos.me') }}
           # The registry as the layer cache. A code-only change then reuses the dependency layer
           # rather than rebuilding 500 MB of node_modules on a runner with a cold disk.
           cache-from: type=registry,ref=${{ steps.meta.outputs.image }}:buildcache
@@ -858,6 +864,16 @@ jobs:
           for pass in 1 2; do
             check_http "https://${CONTROL_PLANE_DOMAIN}/healthz"
             check_http "https://api.${CONTROL_PLANE_DOMAIN}/ready"
+            docs=$(curl --fail --silent --show-error \
+              --retry 12 --retry-all-errors --retry-delay 5 \
+              "https://${CONTROL_PLANE_DOMAIN}/docs/cli")
+            grep -F \
+              "rel=\"canonical\" href=\"https://${CONTROL_PLANE_DOMAIN}/docs/cli\"" \
+              <<<"$docs" >/dev/null
+            if grep -F 'http://localhost:3000' <<<"$docs" >/dev/null; then
+              echo "::error::Production documentation contains the localhost metadata fallback."
+              exit 1
+            fi
 
             aws ecs wait services-stable \
               --cluster "$NAME_PREFIX" --services "$NAME_PREFIX-web"
