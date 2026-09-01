@@ -478,7 +478,7 @@ mod tests {
 fn main() {{
  if std::env::args().nth(1).as_deref()==Some("child") {{ std::thread::sleep(std::time::Duration::from_secs(2)); let _=std::fs::write("descendant",b"bad"); return; }}
  let mut input=Vec::new(); std::io::stdin().read_to_end(&mut input).unwrap();
- std::env::current_dir().unwrap().canonicalize().unwrap();
+ if std::env::current_dir().unwrap().file_name().and_then(|name| name.to_str())!=Some("workspace") {{ std::process::exit(9); }}
  if input==b"slow" {{ std::process::Command::new(std::env::current_exe().unwrap()).arg("child").spawn().unwrap(); std::thread::sleep(std::time::Duration::from_secs(10)); return; }}
  std::fs::write("allowed", b"ok").unwrap();
  if std::fs::read({credential_literal}).is_ok() {{ std::process::exit(10); }}
