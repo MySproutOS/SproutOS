@@ -37,6 +37,7 @@ export function crudStoreListing(db: Kysely<DB>) {
       .updateTable("storeListing")
       .set({
         status,
+        canonicalAndroidAppId: null,
         reviewedByUserId: reviewerUserId,
         reviewedAt: new Date(),
         rejectionReason: reason,
@@ -45,6 +46,16 @@ export function crudStoreListing(db: Kysely<DB>) {
       .where("id", "=", id)
       .where("deletedAt", "is", null)
       .returningAll()
+      .executeTakeFirst()
+  }
+
+  /** Selects or removes the one Android identity this listing publishes anonymously. */
+  async function setCanonicalAndroidRelease(id: string, androidAppId: string | null) {
+    return await db
+      .updateTable("storeListing")
+      .set({ canonicalAndroidAppId: androidAppId, updatedAt: new Date() })
+      .where("id", "=", id)
+      .returning(["id", "canonicalAndroidAppId"])
       .executeTakeFirst()
   }
 
@@ -61,5 +72,5 @@ export function crudStoreListing(db: Kysely<DB>) {
       .execute()
   }
 
-  return { create, incrementInstallCount, unpublish, update }
+  return { create, incrementInstallCount, setCanonicalAndroidRelease, unpublish, update }
 }

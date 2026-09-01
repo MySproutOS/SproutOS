@@ -1,4 +1,5 @@
 import Link from "next/link"
+import { Badge } from "@ui/base/ui/badge"
 
 export type StoreCardListing = {
   slug: string
@@ -16,13 +17,16 @@ const compact = new Intl.NumberFormat("en-US", { notation: "compact", maximumFra
 export function ListingCard({ listing, tags }: { listing: StoreCardListing; tags: string[] }) {
   return (
     <article className="group relative flex flex-col rounded-2xl border rule-soft bg-card/60 p-5 transition-colors hover:border-primary/40">
-      <h3 className="font-display text-base font-semibold tracking-tight">
-        {/* The whole card is the target, but only the title is the link — one anchor per card
+      <div className="flex items-start justify-between gap-3">
+        <h3 className="font-display text-base font-semibold tracking-tight">
+          {/* The whole card is the target, but only the title is the link — one anchor per card
             keeps the accessible name meaningful and the crawlable text honest. */}
-        <Link href={`/store/${listing.slug}`} className="before:absolute before:inset-0">
-          {listing.name}
-        </Link>
-      </h3>
+          <Link href={`/store/${listing.slug}`} className="before:absolute before:inset-0">
+            {listing.name}
+          </Link>
+        </h3>
+        <Badge variant="outline">Public template</Badge>
+      </div>
 
       <p className="mt-1.5 flex-1 text-sm leading-relaxed text-muted-foreground text-pretty">
         {listing.tagline}

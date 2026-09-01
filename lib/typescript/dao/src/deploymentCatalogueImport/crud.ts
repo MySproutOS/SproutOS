@@ -145,6 +145,9 @@ export function crudDeploymentCatalogueImport(db: Kysely<DB>) {
           upstreamRepo: listing.upstreamRepo,
           upstreamRepoUrl: listing.upstreamRepoUrl,
           status: listing.status,
+          ...(listing.platform !== "android" || listing.status !== "published"
+            ? { canonicalAndroidAppId: null }
+            : {}),
           reviewedAt: listing.verifiedAt,
           reviewedByUserId: null,
           rejectionReason: null,
@@ -170,6 +173,7 @@ export function crudDeploymentCatalogueImport(db: Kysely<DB>) {
         .updateTable("storeListing")
         .set({
           status: "archived",
+          canonicalAndroidAppId: null,
           catalogueArchivedAt: sql<Date>`now()`,
           capabilityVerifiedAt: null,
           e2eVerifiedAt: null,

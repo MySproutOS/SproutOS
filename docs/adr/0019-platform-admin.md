@@ -29,16 +29,21 @@ The three ways to do that:
 problem: the population is a handful of people, and a second permission model to keep in step with
 the first is how one of them drifts out of date.
 
-**What it grants is exactly two things:**
+**What it grants is exactly three things:**
 
 - Reading across organizations on the platform surface — finding a user, seeing which organizations
   they belong to. Enough to answer "who is this and where do I look".
 - Starting an **impersonated session**, which is how everything else is done.
+- Curating the platform-owned **global store catalogue**, including selecting the one exact signed
+  Android identity a reviewed listing publishes anonymously. Tenant roles cannot grant this: store
+  listings are global and unowned, so evaluating their moderation against an arbitrary
+  organization's wildcard would let any organization owner rewrite the public catalogue.
 
-**It grants no direct write into a customer's data.** There is no admin route that edits a project,
-changes a plan, or rotates a credential. Every such change is made _as the customer_, through a
-session that records who was behind it — which means it lands in the customer's own audit trail,
-visible to them, rather than in a private admin log they cannot see.
+**It grants no direct write into a customer's project data.** The catalogue association controls
+global discovery; it does not edit the selected project, artifact, or runtime. There is no admin
+route that edits a project, changes a plan, or rotates a credential. Every such change is made _as
+the customer_, through a session that records who was behind it — which means it lands in the
+customer's own audit trail, visible to them, rather than in a private admin log they cannot see.
 
 ### How impersonation works
 

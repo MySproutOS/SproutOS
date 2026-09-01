@@ -133,6 +133,7 @@ function StoreListingDetail() {
               <CardTitle className="flex items-center gap-2 text-base">
                 <span aria-hidden="true">{data.glyph}</span>
                 {data.name}
+                <Badge variant="outline">Public template</Badge>
                 <Badge variant="muted">Branch: {data.branch}</Badge>
               </CardTitle>
             </CardHeader>

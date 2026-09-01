@@ -40,8 +40,9 @@ function StoreList() {
       </PageHeader>
       <PageBody>
         <p className="max-w-prose text-[13px] leading-relaxed text-muted-foreground">
-          Every app here already runs. Forking one copies it into your organization, provisions what
-          it declares, and deploys it.
+          Every template here is public and already runs. Forking one copies it into your
+          organization. Your deployed apps appear in your personal catalogue; store publication is a
+          separate reviewed release.
         </p>
 
         {/*
@@ -113,6 +114,7 @@ function StoreList() {
                   {listing.tagline}
                 </p>
                 <div className="flex flex-wrap items-center gap-1.5">
+                  <Badge variant="outline">Public template</Badge>
                   {listing.tags.map((tag) => (
                     <Badge key={tag} variant="muted">
                       {tag}

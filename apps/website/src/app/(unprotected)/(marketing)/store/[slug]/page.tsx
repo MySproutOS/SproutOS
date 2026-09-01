@@ -3,6 +3,7 @@ import { fetchStoreListingScreenshot } from "@lib/dao/storeListingScreenshot/fet
 import { fetchStoreListingTag } from "@lib/dao/storeListingTag/fetch"
 import { db } from "@sproutos/db"
 import { Button } from "@ui/base/ui/button"
+import { Badge } from "@ui/base/ui/badge"
 import type { Metadata } from "next"
 import Link from "next/link"
 import { notFound } from "next/navigation"
@@ -76,6 +77,9 @@ export default async function ListingPage({ params }: Params) {
 
           <div className="flex flex-col gap-8 lg:flex-row lg:items-start lg:justify-between">
             <div className="max-w-2xl">
+              <Badge variant="outline" className="mb-3">
+                Public template
+              </Badge>
               <h1 className="font-display text-3xl font-semibold tracking-tight text-balance sm:text-[2.5rem] sm:leading-[1.1]">
                 {listing.name}
               </h1>

@@ -11,9 +11,9 @@ import { getSession } from "../middleware"
  * second permission model to keep in step with the first is how one of them drifts.
  *
  * What `is_admin` grants is defined in `docs/adr/0019-platform-admin.md` and is narrow on purpose:
- * read across organizations, and the ability to *become* a user through an audited impersonation.
- * It grants no write into a customer's data directly — every such change is made as the customer,
- * through a session that records who was really behind it.
+ * read across organizations, audited impersonation, and curation of the platform-owned global
+ * store catalogue. It grants no write into a customer's project data directly — every such change
+ * is made as the customer, through a session that records who was really behind it.
  */
 export const adminAuthMiddleware = createMiddleware<{
   Variables: {

@@ -39,7 +39,9 @@ export function fetchAndroidApp(db: Kysely<DB>) {
       .selectFrom("androidApp")
       .innerJoin("project", "project.id", "androidApp.projectId")
       .innerJoin("deployment", "deployment.id", "androidApp.latestGoodDeploymentId")
-      .innerJoin("storeListing", "storeListing.id", "project.storeListingId")
+      // Template provenance is intentionally not publication. Every customer fork retains
+      // project.storeListingId; only the listing's explicit canonical release is anonymous.
+      .innerJoin("storeListing", "storeListing.canonicalAndroidAppId", "androidApp.id")
       .innerJoin("androidSignerJob", (join) =>
         join
           .onRef("androidSignerJob.deploymentId", "=", "androidApp.latestGoodDeploymentId")
@@ -56,6 +58,32 @@ export function fetchAndroidApp(db: Kysely<DB>) {
       .where("androidApp.verifiedSetupCommit", "is not", null)
       .where("deployment.status", "=", "ready")
       .execute()
+  }
+
+  /**
+   * Verifies that an exact signed release is eligible to become a listing's anonymous release.
+   * The project/listing relationship is provenance only; the caller must separately write the
+   * listing's explicit canonical association after this check succeeds.
+   */
+  async function getPublishableForListing(listingId: string, androidAppId: string) {
+    return await db
+      .selectFrom("androidApp")
+      .innerJoin("project", "project.id", "androidApp.projectId")
+      .innerJoin("deployment", "deployment.id", "androidApp.latestGoodDeploymentId")
+      .innerJoin("androidSignerJob", (join) =>
+        join
+          .onRef("androidSignerJob.deploymentId", "=", "androidApp.latestGoodDeploymentId")
+          .on("androidSignerJob.state", "=", "succeeded"),
+      )
+      .select(["androidApp.id", "project.id as projectId", "deployment.id as deploymentId"])
+      .where("androidApp.id", "=", androidAppId)
+      .where("project.storeListingId", "=", listingId)
+      .where("project.deletedAt", "is", null)
+      .where("androidApp.developerConsoleState", "=", "registered")
+      .where("androidApp.developerConsoleProviderState", "=", "REGISTERED")
+      .where("androidApp.verifiedSetupCommit", "is not", null)
+      .where("deployment.status", "=", "ready")
+      .executeTakeFirst()
   }
 
   async function listPersonalCatalogue(userId: string, organizationId: string | null = null) {
@@ -160,6 +188,7 @@ export function fetchAndroidApp(db: Kysely<DB>) {
   return {
     getForProject,
     getOne,
+    getPublishableForListing,
     listPersonalCatalogue,
     listPersonalSites,
     listPublicCatalogue,

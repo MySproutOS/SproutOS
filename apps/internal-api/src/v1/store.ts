@@ -14,6 +14,7 @@ import { describeRoute } from "hono-typebox-openapi"
 import { resolver } from "hono-typebox-openapi/typebox"
 import { validator } from "../utils/validator"
 import { authMiddleware, authNoThrowMiddleware } from "../middleware"
+import { adminAuthMiddleware } from "../admin/middleware"
 import { collectionResource, paramResource, requirePermission } from "../rbac"
 import { estimateListingCosts } from "@lib/billing"
 import { EmptyObject, ErrorSchemaResponse } from "../utils/common.serializer"
@@ -290,12 +291,10 @@ const app = new Hono()
 /**
  * Moderation, mounted under `/orgs/:orgSlug` rather than beside the public routes.
  *
- * The catalogue is global but `requirePermission` is not: it evaluates a grant inside one
- * organization and builds the SRN from the organization it resolved. Hanging these off
- * `/v1/store` would make them depend on `user_preference.last_org_id` to decide which team's
- * grants apply — a moderator in two organizations would get different answers depending on which
- * tab they last opened. The slug in the path makes the acting organization explicit, and it is
- * the organization the `audit_log` row is written against.
+ * These legacy routes are organization-shaped for their audit context, but the catalogue is
+ * global. Platform-admin authentication therefore precedes tenant RBAC: an organization wildcard
+ * alone must never grant global listing reads or writes. New global operations belong under
+ * `/admin/store`; these remain until existing moderation clients migrate.
  */
 export const storeModeration = new Hono()
   .use(authMiddleware)
@@ -308,13 +307,17 @@ export const storeModeration = new Hono()
           description: "A page of listings",
           content: { "application/json": { schema: resolver(storeSchemaListResponse) } },
         },
-        403: { description: "Caller lacks store:listing:moderate", ...errorResponse },
+        403: {
+          description: "Caller is not a platform admin or lacks store:listing:moderate",
+          ...errorResponse,
+        },
         404: {
           description: "No such organization, or the caller is not a member",
           ...errorResponse,
         },
       },
     }),
+    adminAuthMiddleware,
     validator("query", storeSchemaModerationQuery),
     requirePermission("store:listing:moderate", collectionResource("store", "listing")),
     async (c) => {
@@ -359,10 +362,14 @@ export const storeModeration = new Hono()
       description: "Checks whether a listing can be published by catalogue reconciliation",
       responses: {
         400: { description: "Publication is controlled by the signed catalogue", ...errorResponse },
-        403: { description: "Caller lacks store:listing:moderate", ...errorResponse },
+        403: {
+          description: "Caller is not a platform admin or lacks store:listing:moderate",
+          ...errorResponse,
+        },
         404: { description: "No such listing", ...errorResponse },
       },
     }),
+    adminAuthMiddleware,
     validator("param", storeSchemaListingIdParam),
     requirePermission("store:listing:moderate", paramResource("store", "listing", "listingId")),
     async (c) => {
@@ -386,10 +393,14 @@ export const storeModeration = new Hono()
           description: "The unpublished listing",
           content: { "application/json": { schema: resolver(storeSchemaModerationResponse) } },
         },
-        403: { description: "Caller lacks store:listing:moderate", ...errorResponse },
+        403: {
+          description: "Caller is not a platform admin or lacks store:listing:moderate",
+          ...errorResponse,
+        },
         404: { description: "No such listing", ...errorResponse },
       },
     }),
+    adminAuthMiddleware,
     validator("param", storeSchemaListingIdParam),
     validator("json", storeSchemaUnpublishRequest),
     requirePermission("store:listing:moderate", paramResource("store", "listing", "listingId")),

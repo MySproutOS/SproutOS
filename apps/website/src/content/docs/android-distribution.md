@@ -103,6 +103,22 @@ sprout deploy my-android-app --preset android \
   --version-code 42
 ```
 
+## Understand personal and public availability
+
+A ready, verified, signed app appears in the **Personal** tab for members of its SproutOS
+organization. “Personal” describes who can discover and request the download through SproutOS; it
+does not claim that the deployed app or website runtime is private.
+
+Public store publication is a separate reviewed action. A store moderator selects one exact Android
+app identity as the listing's canonical release. Forks keep their source listing as provenance, but
+that link never makes a customer's personalized fork public. Archiving, rejecting, or changing the
+listing away from Android clears the canonical release and stops new anonymous download URLs from
+being issued.
+
+Download URLs are short-lived bearer URLs. Authorization is checked when SproutOS issues one; a URL
+that was already issued remains usable until its one-hour expiry. For an urgent artifact revocation,
+contact SproutOS operations instead of relying only on unpublishing the listing.
+
 ## Test installation and updating
 
 Test the public user journey on a supported Android device or emulator before announcing a release:
