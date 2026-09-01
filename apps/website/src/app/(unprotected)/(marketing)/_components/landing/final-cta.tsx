@@ -1,5 +1,6 @@
 import { SproutMark } from "@website/components/icons"
-import { LoginWithGitHubButton } from "@website/components/auth/login-with-github-button"
+import { Button } from "@ui/base/ui/button"
+import Link from "next/link"
 import { Reveal } from "@ui/spa-shared/reveal"
 
 export function FinalCta() {
@@ -21,11 +22,11 @@ export function FinalCta() {
           runs on.
         </p>
         <div className="mt-9">
-          <LoginWithGitHubButton size="xl" />
+          <Button size="xl" render={<Link href="/login">Get started</Link>} />
         </div>
 
         <p className="mt-6 font-mono text-xs text-muted-foreground">
-          Sign in with GitHub to fork your first project
+          Sign in to fork your first project
         </p>
       </Reveal>
     </section>

@@ -45,7 +45,32 @@ function headingText(children: unknown[]): string {
     .join("")
 }
 
+/*
+  Images in a post.
+
+  A Markdoc *tag* rather than plain `![alt](src)`, because `next/image` needs intrinsic dimensions
+  to reserve space, and markdown syntax has nowhere to put them. Without them every figure is a
+  layout shift on a page whose whole job is to be read.
+
+  Files live in `public/blog/`, so `src` is a normal absolute path the browser can fetch and the
+  optimizer can read from disk.
+*/
+export const tags: Config["tags"] = {
+  image: {
+    render: "PostImage",
+    selfClosing: true,
+    attributes: {
+      src: { type: String, required: true },
+      alt: { type: String, required: true },
+      width: { type: Number, required: true },
+      height: { type: Number, required: true },
+      caption: { type: String },
+    },
+  },
+}
+
 export const config: Config = {
+  tags,
   nodes: {
     /*
       The document node renders an `<article>` by default, and the page already provides one around

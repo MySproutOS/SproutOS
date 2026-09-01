@@ -1,5 +1,6 @@
 import { fetchStoreListing } from "@lib/dao/storeListing/fetch"
 import { db } from "@sproutos/db"
+import { POSTS } from "@website/lib/blog"
 import { DOCS } from "@website/lib/docs"
 import type { MetadataRoute } from "next"
 
@@ -28,6 +29,7 @@ const STATIC_PATHS = [
   "/business/it",
   "/store",
   "/download",
+  "/blog",
   "/docs",
   "/docs/users",
   "/docs/developers",
@@ -52,6 +54,12 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
       url: `/docs/${doc.slug}`,
       lastModified: now,
       changeFrequency: "monthly" as const,
+      priority: 0.5,
+    })),
+    ...POSTS.map((post) => ({
+      url: `/blog/${post.slug}`,
+      lastModified: new Date(post.date),
+      changeFrequency: "yearly" as const,
       priority: 0.5,
     })),
     ...listings.map((listing) => ({

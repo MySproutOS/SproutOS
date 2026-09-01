@@ -55,7 +55,7 @@ next page" from the extra one.
 
 ## The fork button
 
-`Fork this app` sends someone to `/login/github?next=/store/<slug>`, and the callback returns them
+`Fork this app` sends someone to `/login?next=/store/<slug>`, and the callback returns them
 here instead of to `/dashboard` — landing on an empty dashboard loses the app they clicked.
 
 The return path is validated by `sanitizeReturnTo` in `apps/website/src/lib/return-to.ts` on the

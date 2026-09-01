@@ -1,11 +1,12 @@
 import { fetchStoreListing } from "@lib/dao/storeListing/fetch"
 import { db } from "@sproutos/db"
-import { LoginWithGitHubButton } from "@website/components/auth/login-with-github-button"
+import { Button } from "@ui/base/ui/button"
+import { AndroidBadge, StoreBadge } from "../_components/store-badge"
 import { Reveal, RevealItem } from "@ui/spa-shared/reveal"
 import type { Metadata } from "next"
 import Link from "next/link"
 import { ForkMaintenance } from "./_components/fork-maintenance"
-import { PersonalizeFlow } from "./_components/personalize-flow"
+import { PersonalizeFlow } from "../_components/personalize-flow"
 
 export const metadata: Metadata = {
   title: "Personalize apps and websites — SproutOS",
@@ -76,7 +77,7 @@ export default async function PersonalizePage() {
               works, and the people maintaining it — exactly where it was.
             </p>
             <div className="mt-8 flex flex-wrap items-center gap-3">
-              <LoginWithGitHubButton size="xl" />
+              <Button size="xl" render={<Link href="/login">Get started</Link>} />
               <Link
                 href="/store"
                 className="inline-flex items-center gap-1.5 rounded-lg border border-primary/40 bg-primary/8 px-4 py-2 text-sm font-medium text-foreground transition-colors hover:border-primary/70 hover:bg-primary/12"
@@ -189,12 +190,9 @@ export default async function PersonalizePage() {
               Every listing, forkable from the browser. You can look around without an account —
               signing in is what it takes to make a copy, not to read the shelf.
             </p>
-            <Link
-              href="/store"
-              className="mt-6 inline-flex items-center gap-1.5 text-sm font-medium text-primary transition-colors hover:underline"
-            >
-              Open the web store <span aria-hidden="true">→</span>
-            </Link>
+            <div className="mt-6">
+              <StoreBadge />
+            </div>
           </Reveal>
 
           <Reveal delay={80} className="rounded-2xl border rule-soft bg-card/60 p-7 sm:p-8">
@@ -207,12 +205,9 @@ export default async function PersonalizePage() {
               alongside them. Not on Google Play — the download page shows the checksums and walks
               through the permission Android will ask for.
             </p>
-            <Link
-              href="/download"
-              className="mt-6 inline-flex items-center gap-1.5 text-sm font-medium text-primary transition-colors hover:underline"
-            >
-              Get it for Android <span aria-hidden="true">→</span>
-            </Link>
+            <div className="mt-6">
+              <AndroidBadge />
+            </div>
           </Reveal>
         </div>
       </section>

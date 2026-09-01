@@ -1,4 +1,4 @@
-import { LoginWithGitHubButton } from "@website/components/auth/login-with-github-button"
+import { Button } from "@ui/base/ui/button"
 import { Reveal } from "@ui/spa-shared/reveal"
 import type { Metadata } from "next"
 import Link from "next/link"
@@ -148,7 +148,7 @@ export default function DataOwnershipPage() {
           </Reveal>
 
           <Reveal delay={140} className="mt-12 flex justify-center">
-            <LoginWithGitHubButton size="xl" variant="outline" />
+            <Button size="xl" variant="outline" render={<Link href="/login">Get started</Link>} />
           </Reveal>
         </div>
       </section>
