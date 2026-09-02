@@ -1,5 +1,13 @@
 import { fetchAndroidApp, fetchAndroidSignerJob, fetchProject, fetchRepository } from "@lib/dao"
-import { createGitHubClient, organizationGitHubCredential } from "@lib/github"
+import {
+  createGitHubClient,
+  GitHubAuthError,
+  type GitHubClient,
+  type GitHubCredential,
+  GitHubNotFoundError,
+  organizationGitHubCredential,
+  userGitHubCredential,
+} from "@lib/github"
 import { ensureAndroidSetup, recordVerifiedSetupCommit } from "@lib/jobs"
 import { db } from "@sproutos/db"
 import { Hono } from "hono"
@@ -17,6 +25,87 @@ import {
 } from "./android-apps.serializer"
 
 const errorResponse = { content: { "application/json": { schema: resolver(ErrorSchemaResponse) } } }
+
+type RepositoryHeadDependencies = {
+  client: GitHubClient
+  organizationCredential: typeof organizationGitHubCredential
+  userCredential: typeof userGitHubCredential
+}
+
+const repositoryHeadDependencies: RepositoryHeadDependencies = {
+  client: createGitHubClient(),
+  organizationCredential: organizationGitHubCredential,
+  userCredential: userGitHubCredential,
+}
+
+export class RepositoryReadUnavailableError extends Error {
+  override readonly name = "RepositoryReadUnavailableError"
+}
+
+function credentialCannotReadRepository(error: unknown): boolean {
+  return error instanceof GitHubAuthError || error instanceof GitHubNotFoundError
+}
+
+async function readHead(
+  client: GitHubClient,
+  credential: GitHubCredential,
+  path: string,
+): Promise<string> {
+  const response = await client.request<{ object: { sha: string } }>({
+    method: "GET",
+    path,
+    credential,
+  })
+  return response.data.object.sha
+}
+
+export async function repositoryHeadSha(
+  input: {
+    organizationId: string
+    userId: string
+    owner: string
+    repository: string
+    repositoryId: number
+    branch: string
+  },
+  dependencies: RepositoryHeadDependencies = repositoryHeadDependencies,
+): Promise<string> {
+  const path = `/repos/${input.owner}/${input.repository}/git/ref/heads/${encodeURIComponent(input.branch)}`
+  let installationCredential: GitHubCredential | undefined
+  try {
+    installationCredential = await dependencies.organizationCredential(
+      db,
+      input.organizationId,
+      { purpose: "project-repository-read", repositoryId: input.repositoryId },
+      input.owner,
+    )
+  } catch (error) {
+    if (!credentialCannotReadRepository(error)) throw error
+  }
+  if (installationCredential !== undefined) {
+    try {
+      return await readHead(dependencies.client, installationCredential, path)
+    } catch (error) {
+      if (!credentialCannotReadRepository(error)) throw error
+    }
+  }
+
+  let userCredential: GitHubCredential | undefined
+  try {
+    userCredential = await dependencies.userCredential(db, input.userId)
+  } catch (error) {
+    if (!credentialCannotReadRepository(error)) throw error
+  }
+  if (userCredential !== undefined) {
+    try {
+      return await readHead(dependencies.client, userCredential, path)
+    } catch (error) {
+      if (!credentialCannotReadRepository(error)) throw error
+    }
+  }
+
+  throw new RepositoryReadUnavailableError()
+}
 
 async function status(organizationId: string, projectId: string) {
   const project = await fetchProject(db).getInOrganization(organizationId, projectId, ["id"])
@@ -70,110 +159,124 @@ async function status(organizationId: string, projectId: string) {
   }
 }
 
-const app = new Hono()
-  .use(authMiddleware)
-  .post(
-    "/:orgSlug/projects/:projectId/android/setup",
-    describeRoute({
-      description: "Create the immutable Android app identity and request its per-app key.",
-      responses: {
-        200: {
-          description: "Android setup state",
-          content: { "application/json": { schema: resolver(androidAppSchemaResponse) } },
+export function createAndroidAppsRoute(
+  dependencies: { repositoryHeadSha: typeof repositoryHeadSha } = { repositoryHeadSha },
+) {
+  return new Hono()
+    .use(authMiddleware)
+    .post(
+      "/:orgSlug/projects/:projectId/android/setup",
+      describeRoute({
+        description: "Create the immutable Android app identity and request its per-app key.",
+        responses: {
+          200: {
+            description: "Android setup state",
+            content: { "application/json": { schema: resolver(androidAppSchemaResponse) } },
+          },
+          403: { description: "Caller lacks project:update", ...errorResponse },
+          404: { description: "Project not found", ...errorResponse },
         },
-        403: { description: "Caller lacks project:update", ...errorResponse },
-        404: { description: "Project not found", ...errorResponse },
+      }),
+      validator("param", androidAppSchemaParam),
+      requirePermission("project:update", paramResource("project", "project", "projectId")),
+      async (c) => {
+        const { projectId } = c.req.valid("param")
+        const project = await fetchProject(db).getInOrganization(c.var.organization.id, projectId, [
+          "id",
+        ])
+        if (project === undefined) return throwNotFound(c, "Project not found")
+        await ensureAndroidSetup(db, project.id)
+        return c.json((await status(c.var.organization.id, project.id))!)
       },
-    }),
-    validator("param", androidAppSchemaParam),
-    requirePermission("project:update", paramResource("project", "project", "projectId")),
-    async (c) => {
-      const { projectId } = c.req.valid("param")
-      const project = await fetchProject(db).getInOrganization(c.var.organization.id, projectId, [
-        "id",
-      ])
-      if (project === undefined) return throwNotFound(c, "Project not found")
-      await ensureAndroidSetup(db, project.id)
-      return c.json((await status(c.var.organization.id, project.id))!)
-    },
-  )
-  .get(
-    "/:orgSlug/projects/:projectId/android/status",
-    describeRoute({
-      description: "Read key, registration, setup-commit, release, and signer-job state.",
-      responses: {
-        200: {
-          description: "Android setup state",
-          content: { "application/json": { schema: resolver(androidAppSchemaResponse) } },
+    )
+    .get(
+      "/:orgSlug/projects/:projectId/android/status",
+      describeRoute({
+        description: "Read key, registration, setup-commit, release, and signer-job state.",
+        responses: {
+          200: {
+            description: "Android setup state",
+            content: { "application/json": { schema: resolver(androidAppSchemaResponse) } },
+          },
+          403: { description: "Caller lacks project:read", ...errorResponse },
+          404: { description: "Android setup not found", ...errorResponse },
         },
-        403: { description: "Caller lacks project:read", ...errorResponse },
-        404: { description: "Android setup not found", ...errorResponse },
+      }),
+      validator("param", androidAppSchemaParam),
+      requirePermission("project:read", paramResource("project", "project", "projectId")),
+      async (c) => {
+        const result = await status(c.var.organization.id, c.req.valid("param").projectId)
+        return result === undefined ? throwNotFound(c, "Android setup not found") : c.json(result)
       },
-    }),
-    validator("param", androidAppSchemaParam),
-    requirePermission("project:read", paramResource("project", "project", "projectId")),
-    async (c) => {
-      const result = await status(c.var.organization.id, c.req.valid("param").projectId)
-      return result === undefined ? throwNotFound(c, "Android setup not found") : c.json(result)
-    },
-  )
-  .post(
-    "/:orgSlug/projects/:projectId/android/verify",
-    describeRoute({
-      description:
-        "Verify that the setup commit is the connected repository's production-branch HEAD.",
-      responses: {
-        200: {
-          description: "Verified Android setup state",
-          content: { "application/json": { schema: resolver(androidAppSchemaResponse) } },
+    )
+    .post(
+      "/:orgSlug/projects/:projectId/android/verify",
+      describeRoute({
+        description:
+          "Verify that the setup commit is the connected repository's production-branch HEAD.",
+        responses: {
+          200: {
+            description: "Verified Android setup state",
+            content: { "application/json": { schema: resolver(androidAppSchemaResponse) } },
+          },
+          403: { description: "Caller lacks project:update", ...errorResponse },
+          404: { description: "Project or Android setup not found", ...errorResponse },
+          409: {
+            description: "Commit is not production HEAD or the repository cannot be verified",
+            ...errorResponse,
+          },
         },
-        403: { description: "Caller lacks project:update", ...errorResponse },
-        404: { description: "Project or Android setup not found", ...errorResponse },
-        409: { description: "Commit is not production HEAD", ...errorResponse },
+      }),
+      validator("param", androidAppSchemaParam),
+      validator("json", androidAppSchemaVerifyRequest),
+      requirePermission("project:update", paramResource("project", "project", "projectId")),
+      async (c) => {
+        const { projectId } = c.req.valid("param")
+        const project = await fetchProject(db).getInOrganization(c.var.organization.id, projectId, [
+          "repositoryId",
+          "productionBranch",
+        ])
+        if (project === undefined) return throwNotFound(c, "Project not found")
+        const android = await fetchAndroidApp(db).getForProject(projectId, ["id"])
+        if (android === undefined) return throwNotFound(c, "Android setup not found")
+        const repository = await fetchRepository(db).getInOrganization(
+          c.var.organization.id,
+          project.repositoryId,
+          ["ownerLogin", "name", "defaultBranch", "githubRepoId"],
+        )
+        if (repository === undefined) return throwNotFound(c, "Repository not found")
+        const repositoryId = Number(repository.githubRepoId)
+        if (!Number.isSafeInteger(repositoryId) || repositoryId <= 0) {
+          return throwNotFound(c, "GitHub repository not found")
+        }
+        const branch = project.productionBranch ?? repository.defaultBranch
+        let head: string
+        try {
+          head = await dependencies.repositoryHeadSha({
+            organizationId: c.var.organization.id,
+            userId: c.var.user.id,
+            owner: repository.ownerLogin,
+            repository: repository.name,
+            repositoryId,
+            branch,
+          })
+        } catch (error) {
+          if (error instanceof RepositoryReadUnavailableError) {
+            return throwConflict(
+              c,
+              "SproutOS cannot read this repository. Grant the SproutOS GitHub App access to it or reconnect GitHub with private-repository access, then retry.",
+            )
+          }
+          throw error
+        }
+        const commit = c.req.valid("json").commit
+        if (head !== commit) {
+          return throwConflict(c, `Commit ${commit} is not ${branch} HEAD`)
+        }
+        await recordVerifiedSetupCommit(db, android.id, commit)
+        return c.json((await status(c.var.organization.id, projectId))!)
       },
-    }),
-    validator("param", androidAppSchemaParam),
-    validator("json", androidAppSchemaVerifyRequest),
-    requirePermission("project:update", paramResource("project", "project", "projectId")),
-    async (c) => {
-      const { projectId } = c.req.valid("param")
-      const project = await fetchProject(db).getInOrganization(c.var.organization.id, projectId, [
-        "repositoryId",
-        "productionBranch",
-      ])
-      if (project === undefined) return throwNotFound(c, "Project not found")
-      const android = await fetchAndroidApp(db).getForProject(projectId, ["id"])
-      if (android === undefined) return throwNotFound(c, "Android setup not found")
-      const repository = await fetchRepository(db).getInOrganization(
-        c.var.organization.id,
-        project.repositoryId,
-        ["ownerLogin", "name", "defaultBranch", "githubRepoId"],
-      )
-      if (repository === undefined) return throwNotFound(c, "Repository not found")
-      const repositoryId = Number(repository.githubRepoId)
-      if (!Number.isSafeInteger(repositoryId) || repositoryId <= 0) {
-        return throwNotFound(c, "GitHub repository not found")
-      }
-      const credential = await organizationGitHubCredential(
-        db,
-        c.var.organization.id,
-        { purpose: "project-repository-read", repositoryId },
-        repository.ownerLogin,
-      )
-      if (credential === undefined) return throwNotFound(c, "GitHub installation not found")
-      const branch = project.productionBranch ?? repository.defaultBranch
-      const head = await createGitHubClient().request<{ object: { sha: string } }>({
-        method: "GET",
-        path: `/repos/${repository.ownerLogin}/${repository.name}/git/ref/heads/${encodeURIComponent(branch)}`,
-        credential,
-      })
-      const commit = c.req.valid("json").commit
-      if (head.data.object.sha !== commit) {
-        return throwConflict(c, `Commit ${commit} is not ${branch} HEAD`)
-      }
-      await recordVerifiedSetupCommit(db, android.id, commit)
-      return c.json((await status(c.var.organization.id, projectId))!)
-    },
-  )
+    )
+}
 
-export default app
+export default createAndroidAppsRoute()
