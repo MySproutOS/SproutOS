@@ -273,8 +273,11 @@ export function Sidebar({ orgSlug }: { orgSlug: string }) {
         collapsed ? "w-14" : "w-58",
       )}
     >
-      <ScrollArea className="min-h-0 flex-1">
-        <div className="flex min-h-dvh flex-col">
+      <ScrollArea
+        className="min-h-0 flex-1"
+        viewportClassName="[&>[data-slot=scroll-area-content]]:w-full [&>[data-slot=scroll-area-content]]:min-w-0!"
+      >
+        <div className="flex min-h-dvh w-full min-w-0 flex-col">
           <SidebarBody orgSlug={orgSlug} />
           <button
             type="button"
