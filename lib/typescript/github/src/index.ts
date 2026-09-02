@@ -38,6 +38,7 @@ export {
   getBranchHeadSha,
   getRepository,
   getRepositoryById,
+  isRepositoryEmpty,
   type InstallationRepositoryPage,
   listInstallationRepositories,
   listAllInstallationRepositories,

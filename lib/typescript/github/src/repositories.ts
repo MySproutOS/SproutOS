@@ -1,5 +1,5 @@
 import type { GitHubClient } from "./client"
-import { GitHubCredentialError } from "./errors"
+import { GitHubApiError, GitHubCredentialError } from "./errors"
 import type {
   ForkRepositoryInput,
   GenerateFromTemplateInput,
@@ -20,6 +20,7 @@ type RawRepository = {
   owner?: RawOwner
   private?: unknown
   fork?: unknown
+  archived?: unknown
   default_branch?: unknown
   html_url?: unknown
   clone_url?: unknown
@@ -58,6 +59,7 @@ export function toRepository(raw: RawRepository): GitHubRepository {
     ownerType,
     private: raw.private === true,
     fork: raw.fork === true,
+    archived: raw.archived === true,
     defaultBranch: optionalString(raw.default_branch) ?? "main",
     htmlUrl: optionalString(raw.html_url) ?? `https://github.com/${fullName}`,
     cloneUrl: optionalString(raw.clone_url),
@@ -238,6 +240,42 @@ export async function getRepository(
   })
 
   return toRepository(response.data)
+}
+
+/**
+ * Proves that a repository has no commits before SproutOS seeds a signed template snapshot.
+ *
+ * GitHub's repository `size` is measured in rounded kilobytes and is not an emptiness invariant.
+ * The commits endpoint is authoritative: an empty repository answers 409 with GitHub's documented
+ * `Git Repository is empty.` message. Every other error escapes, including a deletion race after
+ * the repository metadata lookup, so a missing or inaccessible repository is never mistaken for
+ * an empty one.
+ */
+export async function isRepositoryEmpty(
+  client: GitHubClient,
+  credential: GitHubCredential,
+  owner: string,
+  repo: string,
+): Promise<boolean> {
+  const path = `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/commits`
+  try {
+    const response = await client.request<unknown[]>({
+      method: "GET",
+      path,
+      credential,
+      query: { per_page: 1 },
+    })
+    return response.data.length === 0
+  } catch (error) {
+    if (
+      error instanceof GitHubApiError &&
+      error.status === 409 &&
+      error.message.trim().toLowerCase().replace(/\.$/, "") === "git repository is empty"
+    ) {
+      return true
+    }
+    throw error
+  }
 }
 
 export type InstallationRepositoryPage = {

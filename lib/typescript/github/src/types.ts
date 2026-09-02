@@ -71,6 +71,7 @@ export type GitHubRepository = {
   readonly ownerType: "User" | "Organization"
   readonly private: boolean
   readonly fork: boolean
+  readonly archived: boolean
   readonly defaultBranch: string
   readonly htmlUrl: string
   readonly cloneUrl: string | null

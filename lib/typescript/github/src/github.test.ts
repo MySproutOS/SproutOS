@@ -10,6 +10,7 @@ import {
   forkRepository,
   generateFromTemplate,
   type GitHubClient,
+  GitHubApiError,
   GitHubCredentialError,
   GitHubNotFoundError,
   GitHubRateLimitError,
@@ -18,6 +19,7 @@ import {
   GitHubTransportError,
   GitHubValidationError,
   installationToken,
+  isRepositoryEmpty,
   listInstallationRepositories,
   listAllInstallationRepositories,
   MissingGitHubAppConfigError,
@@ -187,6 +189,40 @@ describe("repository operations", () => {
       { page: 1, per_page: 2 },
       { page: 2, per_page: 2 },
     ])
+  })
+
+  it("distinguishes an empty repository from one with commits", async () => {
+    const installation = installationToken("ghs_x", 42, new Date(Date.now() + 3_600_000))
+    const empty = fakeClient({
+      "GET /repos/acme/empty/commits": () => {
+        throw new GitHubApiError(409, "/repos/acme/empty/commits", "Git Repository is empty.")
+      },
+    })
+    const populated = fakeClient({
+      "GET /repos/acme/populated/commits": () => [{ sha: "a".repeat(40) }],
+    })
+
+    await expect(isRepositoryEmpty(empty, installation, "acme", "empty")).resolves.toBe(true)
+    await expect(isRepositoryEmpty(populated, installation, "acme", "populated")).resolves.toBe(
+      false,
+    )
+  })
+
+  it("does not mistake an unrelated GitHub conflict for an empty repository", async () => {
+    const client = fakeClient({
+      "GET /repos/acme/conflicted/commits": () => {
+        throw new GitHubApiError(409, "/repos/acme/conflicted/commits", "Repository is locked")
+      },
+    })
+
+    await expect(
+      isRepositoryEmpty(
+        client,
+        installationToken("ghs_x", 42, new Date(Date.now() + 3_600_000)),
+        "acme",
+        "conflicted",
+      ),
+    ).rejects.toThrow("Repository is locked")
   })
 })
 
