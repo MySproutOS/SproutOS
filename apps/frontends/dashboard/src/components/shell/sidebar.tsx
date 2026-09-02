@@ -1,5 +1,6 @@
 import { formatBalanceMicroUsd } from "@lib/billing/money"
 import { Link, type LinkProps } from "@tanstack/react-router"
+import { useCallback, useMemo } from "react"
 import {
   ChevronsUpDownIcon,
   DatabaseIcon,
@@ -31,6 +32,7 @@ import { cn } from "@ui/base/lib/utils"
 import { useCreditBalance } from "@frontends/dashboard/data/billing"
 import {
   organizationRoleLabel,
+  type Organization,
   useOrganization,
   useOrganizations,
 } from "@frontends/dashboard/data/organizations"
@@ -41,25 +43,29 @@ type NavLinkProps = LinkProps & { icon: LucideIcon; label: string }
 
 function NavLink({ icon: Icon, label, ...linkProps }: NavLinkProps) {
   const { collapsed, setMobileOpen } = useSidebar()
+  const closeMobile = useCallback(() => {
+    setMobileOpen(false)
+  }, [setMobileOpen])
 
-  const link = (
-    <Link
-      {...linkProps}
-      onClick={() => {
-        setMobileOpen(false)
-      }}
-      className={cn(
-        // Active styling rides `data-[status=active]` rather than `activeProps`.
-        // Router appends the active classes to the end of the attribute, but CSS
-        // order decides the winner — plain `text-foreground` loses to the base
-        // `text-muted-foreground`, and the highlight silently never appears.
-        "flex h-8 items-center gap-[9px] rounded-md px-[9px] text-[13px] text-muted-foreground transition-colors hover:bg-secondary/60 hover:text-foreground data-[status=active]:bg-secondary data-[status=active]:font-medium data-[status=active]:text-foreground [&[data-status=active]_svg]:text-leaf",
-        collapsed && "justify-center px-0",
-      )}
-    >
-      <Icon className="size-[15px] shrink-0" aria-hidden="true" />
-      {collapsed ? <span className="sr-only">{label}</span> : label}
-    </Link>
+  const link = useMemo(
+    () => (
+      <Link
+        {...linkProps}
+        onClick={closeMobile}
+        className={cn(
+          // Active styling rides `data-[status=active]` rather than `activeProps`.
+          // Router appends the active classes to the end of the attribute, but CSS
+          // order decides the winner — plain `text-foreground` loses to the base
+          // `text-muted-foreground`, and the highlight silently never appears.
+          "flex h-8 items-center gap-[9px] rounded-md px-[9px] text-[13px] text-muted-foreground transition-colors hover:bg-secondary/60 hover:text-foreground data-[status=active]:bg-secondary data-[status=active]:font-medium data-[status=active]:text-foreground [&[data-status=active]_svg]:text-leaf",
+          collapsed && "justify-center px-0",
+        )}
+      >
+        <Icon className="size-[15px] shrink-0" aria-hidden="true" />
+        {collapsed ? <span className="sr-only">{label}</span> : label}
+      </Link>
+    ),
+    [Icon, closeMobile, collapsed, label, linkProps],
   )
 
   if (!collapsed) {
@@ -74,10 +80,32 @@ function NavLink({ icon: Icon, label, ...linkProps }: NavLinkProps) {
   )
 }
 
+function OrganizationMenuItem({ organization }: { organization: Organization }) {
+  const params = useMemo(() => ({ orgSlug: organization.slug }), [organization.slug])
+  const organizationLink = useMemo(
+    () => (
+      <Link to="/orgs/$orgSlug/projects" params={params}>
+        <span className="truncate">{organization.name}</span>
+        <span className="ml-auto text-[11px] text-muted-foreground">
+          {organizationRoleLabel(organization)}
+        </span>
+      </Link>
+    ),
+    [organization, params],
+  )
+
+  return <DropdownMenuItem render={organizationLink} />
+}
+
 function TeamSwitcher({ orgSlug }: { orgSlug: string }) {
   const { collapsed } = useSidebar()
   const { data: current } = useOrganization(orgSlug)
   const { data: organizations } = useOrganizations()
+  const settingsParams = useMemo(() => ({ orgSlug }), [orgSlug])
+  const settingsLink = useMemo(
+    () => <Link to="/orgs/$orgSlug/settings" params={settingsParams} />,
+    [settingsParams],
+  )
 
   return (
     <DropdownMenu>
@@ -107,23 +135,11 @@ function TeamSwitcher({ orgSlug }: { orgSlug: string }) {
         <DropdownMenuGroup>
           <DropdownMenuGroupLabel>Organizations</DropdownMenuGroupLabel>
           {organizations?.map((organization) => (
-            <DropdownMenuItem
-              key={organization.id}
-              render={
-                <Link to="/orgs/$orgSlug/projects" params={{ orgSlug: organization.slug }}>
-                  <span className="truncate">{organization.name}</span>
-                  <span className="ml-auto text-[11px] text-muted-foreground">
-                    {organizationRoleLabel(organization)}
-                  </span>
-                </Link>
-              }
-            />
+            <OrganizationMenuItem key={organization.id} organization={organization} />
           ))}
         </DropdownMenuGroup>
         <DropdownMenuSeparator />
-        <DropdownMenuItem render={<Link to="/orgs/$orgSlug/settings" params={{ orgSlug }} />}>
-          Organization settings
-        </DropdownMenuItem>
+        <DropdownMenuItem render={settingsLink}>Organization settings</DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
   )
@@ -136,27 +152,30 @@ function TeamSwitcher({ orgSlug }: { orgSlug: string }) {
 function CreditBalanceCard({ orgSlug }: { orgSlug: string }) {
   const { collapsed } = useSidebar()
   const { data, isPending } = useCreditBalance(orgSlug)
+  const billingParams = useMemo(() => ({ orgSlug }), [orgSlug])
+  const collapsedBillingLink = useMemo(
+    () => (
+      <Link
+        to="/orgs/$orgSlug/settings/billing"
+        params={billingParams}
+        className="m-2 flex flex-col items-center gap-1.5 rounded-lg border border-border bg-soil-800 px-1 py-2.5"
+      >
+        <span className="eyebrow text-[9px]">$</span>
+        <Progress
+          value={data?.percentRemaining ?? 0}
+          className="w-6"
+          indicatorClassName="bg-husk"
+          aria-label="Credit balance remaining"
+        />
+      </Link>
+    ),
+    [billingParams, data?.percentRemaining],
+  )
 
   if (collapsed) {
     return (
       <Tooltip>
-        <TooltipTrigger
-          render={
-            <Link
-              to="/orgs/$orgSlug/settings/billing"
-              params={{ orgSlug }}
-              className="m-2 flex flex-col items-center gap-1.5 rounded-lg border border-border bg-soil-800 px-1 py-2.5"
-            >
-              <span className="eyebrow text-[9px]">$</span>
-              <Progress
-                value={data?.percentRemaining ?? 0}
-                className="w-6"
-                indicatorClassName="bg-husk"
-                aria-label="Credit balance remaining"
-              />
-            </Link>
-          }
-        />
+        <TooltipTrigger render={collapsedBillingLink} />
         <TooltipContent side="right">
           {data === undefined
             ? "Balance"
@@ -169,7 +188,7 @@ function CreditBalanceCard({ orgSlug }: { orgSlug: string }) {
   return (
     <Link
       to="/orgs/$orgSlug/settings/billing"
-      params={{ orgSlug }}
+      params={billingParams}
       className="m-2 flex flex-col gap-[7px] rounded-lg border border-border bg-soil-800 px-3 py-[11px] transition-colors hover:border-husk/40"
     >
       <span className="flex items-baseline justify-between">
@@ -196,6 +215,7 @@ function CreditBalanceCard({ orgSlug }: { orgSlug: string }) {
 
 export function SidebarBody({ orgSlug }: { orgSlug: string }) {
   const { collapsed } = useSidebar()
+  const orgParams = useMemo(() => ({ orgSlug }), [orgSlug])
 
   return (
     <>
@@ -217,25 +237,25 @@ export function SidebarBody({ orgSlug }: { orgSlug: string }) {
       <nav className="flex flex-1 flex-col gap-0.5 px-2 py-2.5">
         <NavLink
           to="/orgs/$orgSlug/projects"
-          params={{ orgSlug }}
+          params={orgParams}
           icon={LayoutDashboardIcon}
           label="Projects"
         />
         <NavLink
           to="/orgs/$orgSlug/workflows"
-          params={{ orgSlug }}
+          params={orgParams}
           icon={WorkflowIcon}
           label="Workflows"
         />
         <NavLink
           to="/orgs/$orgSlug/databases"
-          params={{ orgSlug }}
+          params={orgParams}
           icon={DatabaseIcon}
           label="Databases"
         />
         <NavLink
           to="/orgs/$orgSlug/domains"
-          params={{ orgSlug }}
+          params={orgParams}
           icon={GlobeLockIcon}
           label="Custom domains"
         />
@@ -245,13 +265,13 @@ export function SidebarBody({ orgSlug }: { orgSlug: string }) {
 
         <NavLink
           to="/orgs/$orgSlug/observability"
-          params={{ orgSlug }}
+          params={orgParams}
           icon={GlobeIcon}
           label="Observability"
         />
         <NavLink
           to="/orgs/$orgSlug/settings"
-          params={{ orgSlug }}
+          params={orgParams}
           icon={SettingsIcon}
           label="Settings"
         />
