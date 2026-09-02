@@ -614,7 +614,9 @@ export function manifestDigestForCatalogueEntry(provenance: unknown, entryId: st
       throw new Error("catalogue provenance is not valid JSON")
     }
   }
-  const row = object(decoded, "catalogue provenance")
+  const envelope = object(decoded, "catalogue provenance")
+  const row =
+    "document" in envelope ? object(envelope.document, "catalogue provenance.document") : envelope
   const materials = array(row.materials, "catalogue provenance.materials")
   const uri = `apps/${entryId}/manifest-source.json`
   for (const [index, value] of materials.entries()) {
