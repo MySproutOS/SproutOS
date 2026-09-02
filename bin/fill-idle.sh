@@ -57,6 +57,15 @@ for service in $SERVICES; do
   group="$NAME_PREFIX-$short-$idle"
   echo "$service: filling $idle ($DESIRED instance(s))"
 
+  # Target tracking belongs only to the colour carrying traffic. In particular, NLB active-flow
+  # metrics can remain non-zero for the full connection-drain window after a cutover. If alarm
+  # notifications remain active on the idle group, that delayed metric can immediately recreate
+  # every instance this script is trying to drain. `cutover.sh` resumes the process only after this
+  # colour becomes the freshly confirmed live colour.
+  aws autoscaling suspend-processes \
+    --auto-scaling-group-name "$group" \
+    --scaling-processes AlarmNotification
+
   set_capacity() {
     capacity=$1
     for attempt in $(seq 1 60); do

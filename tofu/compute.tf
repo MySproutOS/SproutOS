@@ -1680,9 +1680,10 @@ resource "aws_elasticache_parameter_group" "platform" {
   noticed. Requests per target is the thing that actually correlates with being overloaded here.
 
   On both colours, which is only possible because the listener forwards to both with weights. The
-  idle group receives no traffic, so its request count is zero and the policy never scales it out —
-  the policy existing is what matters, so that a cutover does not need one created at the moment
-  traffic arrives.
+  deployment scripts suspend AlarmNotification on the idle colour and resume it only after that
+  colour becomes live. Keeping the policy present means a cutover does not need to create one at
+  the moment traffic arrives, while a delayed load-balancer metric cannot resurrect drained idle
+  capacity.
 */
 resource "aws_autoscaling_policy" "website" {
   for_each = local.service_colours

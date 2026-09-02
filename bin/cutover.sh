@@ -145,6 +145,23 @@ case "$TARGET" in
   *) echo "--to must be blue or green" >&2; exit 2 ;;
 esac
 
+other_colour=$([ "$TARGET" = blue ] && echo green || echo blue)
+target_asg="$NAME_PREFIX-$short-$TARGET"
+drained_asg="$NAME_PREFIX-$short-$other_colour"
+
+reconcile_scaling_processes() {
+  # A drained NLB target group can report active flows until its five-minute connection drain
+  # completes. Suspending AlarmNotification before scaling it to zero prevents that delayed metric
+  # from resurrecting the idle fleet. The newly live colour is safe to resume: any alarm it sees
+  # now represents traffic it actually serves.
+  aws autoscaling suspend-processes \
+    --auto-scaling-group-name "$drained_asg" \
+    --scaling-processes AlarmNotification
+  aws autoscaling resume-processes \
+    --auto-scaling-group-name "$target_asg" \
+    --scaling-processes AlarmNotification
+}
+
 # The storage rule may exist one deployment before its target groups are attached. This is the
 # rollout interlock in `compute.tf`: including an unserved target group in ELB health would make Auto
 # Scaling replace a healthy router. Do not health-gate or move the staged rule until the target
@@ -168,6 +185,7 @@ if [ "$SERVICE" = "router" ] && [ -n "${STORAGE_RULE_ARN:-}" ]; then
 fi
 
 if [ "$target_arn" = "$live" ]; then
+  if [ -z "$DRY_RUN" ]; then reconcile_scaling_processes; fi
   echo "$SERVICE is already on $TARGET; nothing to do" >&2
   exit 0
 fi
@@ -204,8 +222,6 @@ fi
 # cutover carrying a search rule hit `AccessDenied` on `ModifyRule` because the deploy role's grant
 # enumerates rule ARNs and nobody had added the new one. Traffic never moved, because this ran
 # before the listener did.
-other_colour=$([ "$TARGET" = blue ] && echo green || echo blue)
-
 for extra in $EXTRAS; do
   kind=${extra%%|*}
   rest=${extra#*|}
@@ -251,13 +267,14 @@ if [ "$settled" != "$target_arn" ]; then
   exit 1
 fi
 
+reconcile_scaling_processes
+
 echo "$SERVICE traffic is on $TARGET; scaling drained $other_colour capacity to zero"
 
 # The old group is no longer serving, so keeping its desired capacity is both a second set of
 # background workers consuming jobs and an instance bill for the idle colour. OpenTofu deliberately
 # ignores desired-capacity drift because fill and cutover own it; this is cutover's half of that
 # contract. Scale only after the fresh listener read above proves traffic moved.
-drained_asg="$NAME_PREFIX-$short-$other_colour"
 attempt=1
 scaled=""
 while [ "$attempt" -le "$ASG_SCALE_RETRIES" ]; do

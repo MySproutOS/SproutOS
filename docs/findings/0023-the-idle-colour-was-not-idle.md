@@ -13,6 +13,12 @@ This was observed in production after two consecutive successful deployments. Th
 served the newer green release while the blue instance still ran the preceding release, and both
 Auto Scaling groups reported desired capacity one.
 
+A later production deployment exposed a second route to the same bad state. The cutover correctly
+set the drained router group to desired capacity zero, but its target-tracking policy remained
+active. NLB `ActiveFlowCount` stayed non-zero during connection draining while healthy targets fell
+to zero, so the alarm raised desired capacity from zero to three and then six. The idle colour was
+recreated before the deployment's final verifier could observe it empty.
+
 ## Why the previous checks passed
 
 `fill-idle.sh` intentionally raises the idle colour to one before a deployment. `cutover.sh`
@@ -22,6 +28,11 @@ own it, so a later apply correctly preserved the accidental second instance.
 
 The cutover tests stopped at the routing boundary. They proved which colour received traffic, not
 which processes were still able to consume background work.
+
+The first capacity fix also treated desired capacity zero as durable. That is only true when no
+scaling policy is still authorized to change it. The metric and policy were valid for the live
+colour, so infrastructure validation and the live target's health did not expose that the same
+alarm process was still enabled on the drained colour.
 
 This repeats the evidence boundary recorded by
 `/Users/andrew/.claude/plans/read-the-readme-md-to-eventual-dusk.md`: listener health is not proof
@@ -36,6 +47,15 @@ website or router Auto Scaling group to desired capacity zero. It retries transi
 reads desired capacity back, and refuses to report the deployment complete unless the old group is
 zero. A dry run, failed traffic move, and no-op cutover do not change capacity.
 
+`fill-idle.sh` now suspends the idle group's `AlarmNotification` process before it drains or fills
+that group. After a successful listener read-back, `cutover.sh` keeps the drained colour suspended
+and resumes `AlarmNotification` only on the newly live colour. A retried no-op cutover reconciles
+those process states as well. Suspending this one process leaves boot, health replacement, and
+explicit desired-capacity changes available while preventing target-tracking alarms from reviving
+an idle fleet.
+
 The tests model both Auto Scaling groups and assert that the serving colour remains at one while
 the drained colour reaches zero. They also cover transient failures and the permanent-failure case
-where traffic moved but old capacity could not be drained.
+where traffic moved but old capacity could not be drained. The fill and cutover tests additionally
+assert that target tracking is suspended before idle capacity changes, resumed only for the live
+group, left untouched by a dry run or failed move, and reconciled by an already-live retry.

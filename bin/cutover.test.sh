@@ -73,6 +73,9 @@ case "$2" in
       | sed 's/"TargetGroupArn":"//; s/","Weight":100//')
     [ -n "$live" ] && echo "$live" > "$STUB_STATE"
     ;;
+  suspend-processes|resume-processes)
+    echo "$*" >> "$STUB_CALLS"
+    ;;
   set-desired-capacity)
     echo "$*" >> "$STUB_CALLS"
     attempts=$(cat "$STUB_SCALE_ATTEMPTS")
@@ -164,6 +167,10 @@ check "production passes the storage rule through both deployment stages" "2" \
   "$(grep -c 'STORAGE_RULE_ARN:.*vars.STORAGE_RULE_ARN' "$HERE/../.github/workflows/deploy.yml")"
 check "deploy role may move the storage rule" "1" \
   "$(grep -c 'aws_lb_listener_rule.storage.arn' "$HERE/../tofu/oidc.tf")"
+check "deploy role may suspend idle target tracking" "1" \
+  "$(grep -c 'autoscaling:SuspendProcesses' "$HERE/../tofu/oidc.tf")"
+check "deploy role may resume live target tracking" "1" \
+  "$(grep -c 'autoscaling:ResumeProcesses' "$HERE/../tofu/oidc.tf")"
 
 # Live on blue, so the idle colour is green and nothing has to say so.
 STUB_LIVE="arn:blue" STUB_HEALTHY=2 out=$(run router)
@@ -181,6 +188,10 @@ check "reads back the drained router desired capacity" "0" \
   "$(cat "$STUB_ASG_STATE/sproutos-router-blue")"
 check "leaves the serving router colour running" "1" \
   "$(cat "$STUB_ASG_STATE/sproutos-router-green")"
+check "suspends target tracking on the drained router colour" "1" \
+  "$(grep -c 'suspend-processes --auto-scaling-group-name sproutos-router-blue --scaling-processes AlarmNotification' "$STUB_CALLS")"
+check "resumes target tracking on the serving router colour" "1" \
+  "$(grep -c 'resume-processes --auto-scaling-group-name sproutos-router-green --scaling-processes AlarmNotification' "$STUB_CALLS")"
 
 STUB_LIVE="arn:green" STUB_HEALTHY=2 out=$(run router)
 check "moves back the other way with the same command" "1" "$(grep -c 'router is on blue' <<<"$out")"
@@ -211,7 +222,8 @@ check "changes nothing when it cannot tell" "0" "$(wc -l < "$STUB_CALLS" | tr -d
 # Asking for the colour already live is a no-op, not an error: a retried deploy step should be safe.
 STUB_LIVE="arn:blue" STUB_HEALTHY=2 out=$(run router --to blue); status=$?
 check "is a no-op when already there" "0" "$status"
-check "and changes nothing" "0" "$(wc -l < "$STUB_CALLS" | tr -d ' ')"
+check "and reconciles both colours' scaling processes" "2" \
+  "$(grep -cE 'suspend-processes|resume-processes' "$STUB_CALLS")"
 check "and does not scale either colour" "0" "$(grep -c 'set-desired-capacity' "$STUB_CALLS")"
 
 # The read-back guard: if something else moved the listener between the check and the write, the
