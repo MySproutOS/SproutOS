@@ -225,6 +225,11 @@ type ManifestService = {
   bindings: { environment: string; output: string }[]
 }
 
+/** Encode an array for a JSONB query parameter instead of node-postgres' PostgreSQL-array path. */
+export function encodeTemplateServiceBindings(bindings: ManifestService["bindings"]): string {
+  return JSON.stringify(bindings)
+}
+
 type GeneratedInput = {
   key: string
   generator: "random_base64url"
@@ -457,7 +462,11 @@ export async function provisionTemplateServices(
             serviceKey: service.key,
             backendServiceId,
             kind: service.kind,
-            bindings: service.bindings,
+            // node-postgres encodes a JavaScript array as a PostgreSQL array literal. The target
+            // column is jsonb, so that arrives as `{...}` and PostgreSQL rejects it as invalid
+            // JSON before the provider is ever called. Serialize JSON arrays explicitly, matching
+            // the other JSONB writers in the provisioning transaction.
+            bindings: encodeTemplateServiceBindings(service.bindings),
           })
         })
         return { backendServiceId, provisioned: false }
