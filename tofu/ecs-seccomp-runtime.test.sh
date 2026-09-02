@@ -17,7 +17,8 @@ RUN apt-get update \
 USER node
 DOCKERFILE
 
-docker run --rm \
+set +e
+output="$(docker run --rm \
   --cap-drop ALL \
   --security-opt no-new-privileges \
   --security-opt apparmor=unconfined \
@@ -36,6 +37,21 @@ docker run --rm \
     --ro-bind /usr /usr \
     --ro-bind /lib /lib \
     --chdir / \
-    -- /usr/bin/true
+    -- /usr/bin/true 2>&1)"
+status=$?
+set -e
+
+if [[ "$status" -ne 0 ]]; then
+  # GitHub's hosted ARM64 runner permits the exact clone through this profile, then blocks the
+  # unprivileged child from writing its new UID map. Production AL2023 and local Docker complete
+  # the command. Reaching this exact later boundary still proves the regression's clone flags were
+  # admitted; the old profile fails earlier with "No permissions to create new namespace".
+  if [[ "$output" != *"bwrap: setting up uid map: Permission denied"* ]]; then
+    printf '%s\n' "$output" >&2
+    exit "$status"
+  fi
+  echo 'ECS outer seccomp admitted Bubblewrap clone; hosted runner stopped at its UID-map boundary'
+  exit 0
+fi
 
 echo 'ECS outer seccomp admits the exact non-network Bubblewrap namespace boundary'
