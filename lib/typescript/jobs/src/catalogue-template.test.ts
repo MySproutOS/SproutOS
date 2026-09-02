@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest"
 import type { ServiceDriver } from "@lib/services"
 import {
   catalogueTemplateApplyRequest,
+  encodeTemplateServiceBindings,
   orchestrateCatalogueTemplate,
   reconcileTemplateServiceProvision,
   recoverTemplateService,
@@ -276,6 +277,23 @@ describe("catalogue template service recovery", () => {
     expect(createCalls).toBe(1)
     expect(provisionCalls).toBe(1)
     expect(recoveryCalls).toBe(0)
+  })
+})
+
+describe("catalogue template service persistence", () => {
+  it("encodes bindings as JSON rather than a PostgreSQL array literal", () => {
+    const bindings = [
+      { environment: "DATABASE_URL", output: "connection_url" },
+      { environment: "DATABASE_USER", output: "username" },
+    ]
+
+    const encoded = encodeTemplateServiceBindings(bindings)
+
+    expect(encoded).toBe(
+      '[{"environment":"DATABASE_URL","output":"connection_url"},{"environment":"DATABASE_USER","output":"username"}]',
+    )
+    expect(JSON.parse(encoded)).toEqual(bindings)
+    expect(encoded).not.toMatch(/^\{/)
   })
 })
 
