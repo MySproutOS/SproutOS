@@ -58,6 +58,12 @@ const PRESET_DEFAULTS: Record<string, PresetRuntime> = {
   next: { runtime: "nodejs22.x", handler: WEB_ADAPTER_HANDLER, webAdapter: true },
   hono: { runtime: "nodejs22.x", handler: WEB_ADAPTER_HANDLER, webAdapter: true },
   /*
+    Native executables are web servers too. On Lambda's provided runtime the executable at
+    `bootstrap` starts directly, while the adapter layer runs as an extension and owns the Runtime
+    API. AWS's own Rust zip examples use this provided.al2023 + bootstrap + layer shape.
+  */
+  web: { runtime: "provided.al2023", handler: "bootstrap", webAdapter: true },
+  /*
     `static` is the exception and stays a handler.
 
     A static build has no server to adapt; the function's whole job is to serve files out of the
@@ -81,4 +87,10 @@ export function runtimeForPreset(preset: string): PresetRuntime {
       webAdapter: false,
     }
   )
+}
+
+/** Whether a release still follows its preset's web-server entry-point convention. */
+export function webAdapterForRelease(preset: string, handler: string | undefined): boolean {
+  const defaults = runtimeForPreset(preset)
+  return defaults.webAdapter && (handler === undefined || handler === defaults.handler)
 }

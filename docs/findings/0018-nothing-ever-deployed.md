@@ -59,6 +59,12 @@ Three things have to be true together, and each is a silent failure on its own:
   the function still looks for a handler export, and the configuration looks right,
 - the archive contains `run.sh`, which is what `handler` names.
 
+For a `provided.al2023` native web build the same layer runs as an extension, but the startup
+contract is deliberately different: Lambda executes the archive's `bootstrap` directly, so the
+wrapper variable must be absent. The `web` preset records that custom-runtime convention and still
+attaches the adapter layer and injects the shared port. Treating an unknown `web` preset as a plain
+custom runtime once produced a healthy deployment record whose function could only return 502.
+
 They are applied from one place each. `publishFunction` takes a single `webAdapterLayerArn` and
 derives both the layer and the environment from it, so a caller cannot set one without the other.
 The action writes `run.sh` into the build output _before_ packaging, so the digest covers it.
