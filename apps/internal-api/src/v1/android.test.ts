@@ -201,6 +201,10 @@ describe.runIf(databaseIsReachable && storageIsReachable)(
     let listingId: string
     let organizationSlug: string
     let personalizedApp: SeededApp
+    let siteRepositoryId: string
+    let siteProjectId: string
+    let siteOldDeploymentId: string
+    let siteLiveDeploymentId: string
 
     beforeAll(async () => {
       const s3 = new S3Client({
@@ -237,6 +241,60 @@ describe.runIf(databaseIsReachable && storageIsReachable)(
       trackOrganization(organization.id)
       organizationSlug = organization.slug
       listingId = v7()
+      siteRepositoryId = v7()
+      siteProjectId = v7()
+      siteOldDeploymentId = v7()
+      siteLiveDeploymentId = v7()
+
+      await db
+        .insertInto("repository")
+        .values({
+          id: siteRepositoryId,
+          organizationId: organization.id,
+          githubRepoId: BigInt(`0x${siteRepositoryId.slice(-12)}`),
+          ownerLogin: "sproutos-test",
+          name: `site-${siteRepositoryId.slice(-12)}`,
+          provenance: "new",
+        })
+        .execute()
+      await db
+        .insertInto("project")
+        .values({
+          id: siteProjectId,
+          organizationId: organization.id,
+          repositoryId: siteRepositoryId,
+          name: "Current Personal Site",
+          slug: `site${siteProjectId.slice(-8)}`,
+        })
+        .execute()
+      await db
+        .insertInto("deployment")
+        .values([
+          {
+            id: siteOldDeploymentId,
+            projectId: siteProjectId,
+            kind: "production",
+            preset: "static",
+            gitSha: "1".repeat(40),
+            status: "ready",
+            url: "https://old-personal-site.example",
+          },
+          {
+            id: siteLiveDeploymentId,
+            projectId: siteProjectId,
+            kind: "production",
+            preset: "static",
+            gitSha: "2".repeat(40),
+            status: "ready",
+            url: "https://current-personal-site.example",
+          },
+        ])
+        .execute()
+      await db
+        .updateTable("project")
+        .set({ liveDeploymentId: siteLiveDeploymentId })
+        .where("id", "=", siteProjectId)
+        .execute()
 
       await db
         .insertInto("deploymentCatalogueImport")
@@ -326,6 +384,9 @@ describe.runIf(databaseIsReachable && storageIsReachable)(
         await db.deleteFrom("project").where("id", "=", row.projectId).execute()
         await db.deleteFrom("repository").where("id", "=", row.repositoryId).execute()
       }
+      await db.deleteFrom("deployment").where("projectId", "=", siteProjectId).execute()
+      await db.deleteFrom("project").where("id", "=", siteProjectId).execute()
+      await db.deleteFrom("repository").where("id", "=", siteRepositoryId).execute()
       s3.destroy()
       await db.deleteFrom("storeListing").where("id", "=", listingId).execute()
       await db.deleteFrom("deploymentCatalogueImport").where("id", "=", catalogueImportId).execute()
@@ -433,6 +494,22 @@ describe.runIf(databaseIsReachable && storageIsReachable)(
       const downloaded = await fetch(personalEntry.downloadUrl)
       expect(downloaded.status).toBe(200)
       expect(Buffer.from(await downloaded.arrayBuffer())).toStrictEqual(personalizedApk)
+    })
+
+    it("returns only the live production site when historical ready deployments remain", async () => {
+      const response = await catalogue(owner)
+      expect(response.status).toBe(200)
+      const body = (await response.json()) as {
+        personal: { sites: { name: string; url: string; summary: string }[] }
+      }
+      expect(body.personal.sites).toContainEqual({
+        name: "Current Personal Site",
+        url: "https://current-personal-site.example",
+        summary: "",
+      })
+      expect(body.personal.sites.map((site) => site.url)).not.toContain(
+        "https://old-personal-site.example",
+      )
     })
 
     it("does not leak a same-listing personalized fork to anonymous or another user", async () => {

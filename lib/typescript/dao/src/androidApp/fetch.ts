@@ -183,6 +183,10 @@ export function fetchAndroidApp(db: Kysely<DB>) {
       .$if(organizationId !== null, (qb) =>
         qb.where("project.organizationId", "=", organizationId!),
       )
+      // A project can retain several successful production deployment rows for history. Personal
+      // is a current launcher, so expose only the deployment that is actually live; otherwise the
+      // same URL appears repeatedly and older URLs remain discoverable after a cutover.
+      .whereRef("deployment.id", "=", "project.liveDeploymentId")
       .where("deployment.kind", "=", "production")
       .where("deployment.status", "=", "ready")
       .where("deployment.url", "is not", null)
