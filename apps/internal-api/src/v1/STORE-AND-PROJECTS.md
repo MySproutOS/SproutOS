@@ -69,6 +69,27 @@ keep their provenance link for as long as the row survives.
 | GET    | `/v1/orgs/:orgSlug/repositories`                             | `repository:read`  |
 | GET    | `/v1/orgs/:orgSlug/github/repositories`                      | `github:read`      |
 
+### Private production acceptance for blocked signed templates
+
+`POST /v1/orgs/:orgSlug/store/listings/:listingId/acceptance-projects` breaks the otherwise
+circular launch gate for a signed template: a blocked manifest must not be published without a
+production pass, while the ordinary store-project route must not install an unpublished listing.
+This route is the only exception. It requires an unimpersonated platform-admin browser session
+**and** the caller's ordinary `project:create` permission in the named organization.
+
+The listing must still be an active `draft` backed by a complete signed catalogue import. Its
+manifest must parse under the current closed schema, carry `readiness.status = blocked`, carry no
+E2E evidence, and match the row's exact catalogue entry and immutable plugin digest. The route
+creates an ordinary metered project and snapshots the same import, manifest, source commit, and
+plugin digest used by a public store install. It hardcodes the destination repository to private,
+disables automatic updates, and never edits the listing or either verification timestamp.
+
+Operators should use a platform-owned acceptance organization, supply a reason, poll the returned
+project job through the ordinary project API, and preserve the generated GitHub repository as
+evidence. Completion still does not publish the listing. Production results belong in a new signed
+Deployment-Templates manifest; catalogue reconciliation is the only path that may turn the draft
+into a public listing.
+
 Every `fetch*` takes the organization id alongside the resource id — `getInOrganization`, never
 `getOne`. `requirePermission` authorizes an action against an SRN it builds from the resolved
 organization plus a path parameter it does not verify, so a project id belonging to another

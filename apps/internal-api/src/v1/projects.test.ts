@@ -96,6 +96,9 @@ describe.skipIf(!reachable)("project routes", () => {
   const fixtureHex = listingId.replaceAll("-", "")
   const catalogueImportId = v7()
   const listingSlug = `proj-test-listing-${listingId.slice(-8)}`
+  const acceptanceListingId = v7()
+  const acceptanceFixtureHex = acceptanceListingId.replaceAll("-", "")
+  const acceptanceListingSlug = `proj-acceptance-${acceptanceListingId.slice(-8)}`
 
   let forkedProjectId = ""
   let sharedProjectId = ""
@@ -139,8 +142,71 @@ describe.skipIf(!reachable)("project routes", () => {
               uri: `apps/${listingSlug}/manifest-source.json`,
               digest: `sha256:${fixtureHex.repeat(2)}`,
             },
+            {
+              uri: `apps/${acceptanceListingSlug}/manifest-source.json`,
+              digest: `sha256:${acceptanceFixtureHex.repeat(2)}`,
+            },
           ],
         },
+      })
+      .execute()
+
+    await db
+      .insertInto("storeListing")
+      .values({
+        id: acceptanceListingId,
+        slug: acceptanceListingSlug,
+        name: "Blocked Acceptance Fixture",
+        tagline: "A signed draft for private production acceptance",
+        descriptionMd: "This signed listing must remain draft until production evidence exists.",
+        upstreamOwner: "example",
+        upstreamRepo: `acceptance-${acceptanceListingId.slice(-8)}`,
+        upstreamRepoUrl: `https://github.com/example/acceptance-${acceptanceListingId.slice(-8)}`,
+        defaultBranch: "main",
+        platform: "web",
+        status: "draft",
+        catalogueEntryId: acceptanceListingSlug,
+        catalogueImportId,
+        catalogueSchemaVersion: 1,
+        catalogueManifest: {
+          schema_version: 1,
+          id: acceptanceListingSlug,
+          name: "Blocked Acceptance Fixture",
+          pitch: "A signed draft for private production acceptance",
+          description_md: "This signed listing must remain draft until production evidence exists.",
+          homepage: null,
+          repository: {
+            url: `https://github.com/example/acceptance-${acceptanceListingId.slice(-8)}`,
+            commit: acceptanceFixtureHex.repeat(2).slice(0, 40),
+          },
+          license: "MIT",
+          platform: "web",
+          readiness: {
+            status: "blocked",
+            blocked_reasons: ["Production acceptance has not completed."],
+            e2e_evidence: null,
+          },
+          plugin: {
+            repository: "ghcr.io/mysproutos/project-acceptance-plugin",
+            digest: `sha256:${acceptanceFixtureHex.repeat(2)}`,
+            protocol_version: 1,
+          },
+          deployment: {
+            preset: "static",
+            runtime: "static",
+            architecture: "arm64",
+            migration: null,
+            required_capabilities: [],
+          },
+          services: [],
+          user_inputs: [],
+          generated_inputs: [],
+        },
+        upstreamCommit: acceptanceFixtureHex.repeat(2).slice(0, 40),
+        templatePluginRepository: "ghcr.io/mysproutos/project-acceptance-plugin",
+        templatePluginDigest: `sha256:${acceptanceFixtureHex.repeat(2)}`,
+        capabilityVerifiedAt: null,
+        e2eVerifiedAt: null,
       })
       .execute()
 
@@ -229,7 +295,10 @@ describe.skipIf(!reachable)("project routes", () => {
       await db.deleteFrom("usageRollup").where("id", "in", usageRollupIds).execute()
     }
     await cleanupFixtures()
-    await db.deleteFrom("storeListing").where("id", "=", listingId).execute()
+    await db
+      .deleteFrom("storeListing")
+      .where("id", "in", [listingId, acceptanceListingId])
+      .execute()
     await db.deleteFrom("deploymentCatalogueImport").where("id", "=", catalogueImportId).execute()
   })
 
@@ -281,6 +350,150 @@ describe.skipIf(!reachable)("project routes", () => {
   })
 
   describe("creating a project", () => {
+    it("creates a private acceptance project without publishing the signed draft", async () => {
+      const path = `/v1/orgs/${orgA}/store/listings/${acceptanceListingId}/acceptance-projects`
+      const request = {
+        name: "Private Template Acceptance",
+        region: "us-east-1",
+        ownerLogin: "acme-test",
+        repositoryName: `acceptance-${acceptanceListingId.slice(-8)}`,
+        reason: "Verify the blocked signed template in production before publication.",
+      }
+
+      expect((await call("POST", path, alice, request)).status).toBe(403)
+
+      await db.updateTable("user").set({ isAdmin: true }).where("id", "=", bob.id).execute()
+      try {
+        expect((await call("POST", path, bob, request)).status).toBe(404)
+      } finally {
+        await db.updateTable("user").set({ isAdmin: false }).where("id", "=", bob.id).execute()
+      }
+
+      await db.updateTable("user").set({ isAdmin: true }).where("id", "=", alice.id).execute()
+      try {
+        const published = await call(
+          "POST",
+          `/v1/orgs/${orgA}/store/listings/${listingId}/acceptance-projects`,
+          alice,
+          request,
+        )
+        expect(published.status).toBe(400)
+
+        const ordinary = await call("POST", `/v1/orgs/${orgA}/projects`, alice, {
+          name: "Ordinary Draft Attempt",
+          source: {
+            type: "store",
+            storeListingId: acceptanceListingId,
+            ownerLogin: "acme-test",
+          },
+        })
+        expect(ordinary.status).toBe(400)
+
+        await db
+          .updateTable("storeListing")
+          .set({ templatePluginDigest: `sha256:${"f".repeat(64)}` })
+          .where("id", "=", acceptanceListingId)
+          .execute()
+        expect((await call("POST", path, alice, request)).status).toBe(400)
+        await db
+          .updateTable("storeListing")
+          .set({ templatePluginDigest: `sha256:${acceptanceFixtureHex.repeat(2)}` })
+          .where("id", "=", acceptanceListingId)
+          .execute()
+
+        const response = await call("POST", path, alice, request)
+        expect(response.status).toBe(201)
+        expect(response.json).toMatchObject({
+          storeListingId: acceptanceListingId,
+          catalogueEntryId: acceptanceListingSlug,
+          catalogueImportId,
+          sourceSha: fixtureHex.repeat(2).slice(0, 40),
+          pluginDigest: `sha256:${acceptanceFixtureHex.repeat(2)}`,
+          projectState: "creating",
+          jobState: "queued",
+          repository: {
+            ownerLogin: "acme-test",
+            name: `acceptance-${acceptanceListingId.slice(-8)}`,
+            private: true,
+          },
+        })
+
+        const listing = await db
+          .selectFrom("storeListing")
+          .select(["status", "capabilityVerifiedAt", "e2eVerifiedAt"])
+          .where("id", "=", acceptanceListingId)
+          .executeTakeFirstOrThrow()
+        expect(listing).toEqual({
+          status: "draft",
+          capabilityVerifiedAt: null,
+          e2eVerifiedAt: null,
+        })
+
+        const repository = await db
+          .selectFrom("repository")
+          .select(["private", "provenance", "upstreamFullName", "upstreamStrategy"])
+          .where("id", "=", response.json.repositoryId as string)
+          .executeTakeFirstOrThrow()
+        expect(repository).toEqual({
+          private: true,
+          provenance: "copy",
+          upstreamFullName: `example/acceptance-${acceptanceListingId.slice(-8)}`,
+          upstreamStrategy: "snapshot_copy",
+        })
+
+        const install = await db
+          .selectFrom("projectTemplateInstall")
+          .select([
+            "catalogueImportId",
+            "catalogueEntryId",
+            "deploymentTemplatesCommit",
+            "pluginDigest",
+            "state",
+          ])
+          .where("projectId", "=", response.json.projectId as string)
+          .executeTakeFirstOrThrow()
+        expect(install).toEqual({
+          catalogueImportId,
+          catalogueEntryId: acceptanceListingSlug,
+          deploymentTemplatesCommit: fixtureHex.repeat(2).slice(0, 40),
+          pluginDigest: `sha256:${acceptanceFixtureHex.repeat(2)}`,
+          state: "configuring",
+        })
+
+        const audit = await db
+          .selectFrom("auditLog")
+          .select(["action", "organizationId", "actorUserId", "after"])
+          .where("action", "=", "admin:store:acceptance-project:create")
+          .where("actorUserId", "=", alice.id)
+          .orderBy("id", "desc")
+          .executeTakeFirstOrThrow()
+        expect(audit).toMatchObject({
+          action: "admin:store:acceptance-project:create",
+          organizationId: orgAId,
+          actorUserId: alice.id,
+          after: {
+            storeListingId: acceptanceListingId,
+            operationMetadata: {
+              reason: request.reason,
+              catalogueEntryId: acceptanceListingSlug,
+              catalogueImportId,
+              pluginDigest: `sha256:${acceptanceFixtureHex.repeat(2)}`,
+              repositoryPrivate: true,
+            },
+          },
+        })
+
+        const removed = await call(
+          "DELETE",
+          `/v1/orgs/${orgA}/projects/${response.json.projectId as string}`,
+          alice,
+        )
+        expect(removed.status).toBe(200)
+      } finally {
+        await db.updateTable("user").set({ isAdmin: false }).where("id", "=", alice.id).execute()
+      }
+    })
+
     it("requires a non-null region", async () => {
       const missing = await call(
         "POST",

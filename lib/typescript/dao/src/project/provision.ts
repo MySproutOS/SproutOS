@@ -88,6 +88,8 @@ export type ProvisionProjectInput = {
   regionId?: string | null
   idempotencyKey?: string | null
   audit?: AuditContext
+  auditAction?: string
+  auditMetadata?: Json
 }
 
 export type ProvisionedProject = {
@@ -237,7 +239,7 @@ export function provisionProject(db: Kysely<DB>) {
       await crudAuditLog(tx).record({
         organizationId: input.organizationId,
         actorUserId: input.actorUserId,
-        action: "project:create",
+        action: input.auditAction ?? "project:create",
         resourceSrn: srnFor("project", input.organizationId, "project", project.id),
         before: null,
         after: {
@@ -249,6 +251,7 @@ export function provisionProject(db: Kysely<DB>) {
           autoUpdateEnabled: project.autoUpdateEnabled,
           autoUpdateCadence: project.autoUpdateCadence,
           jobId: job.id,
+          ...(input.auditMetadata === undefined ? {} : { operationMetadata: input.auditMetadata }),
         },
         ...input.audit,
       })

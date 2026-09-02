@@ -107,6 +107,7 @@ import { crudProjectUpdateSuggestion, type SuggestionStatus } from "./projectUpd
 import { fetchProjectUpdateSuggestion } from "./projectUpdateSuggestion/fetch"
 import { crudRepository, isPendingGithubRepoId, pendingGithubRepoId } from "./repository/crud"
 import { fetchRepository } from "./repository/fetch"
+import { fetchRegion } from "./region/fetch"
 import { fetchStoreCategory } from "./storeCategory/fetch"
 import { crudStoreListing } from "./storeListing/crud"
 import {
@@ -249,6 +250,7 @@ export {
   fetchProjectTemplateService,
   fetchProjectUpdateSuggestion,
   fetchRepository,
+  fetchRegion,
   fetchRole,
   fetchStoreCategory,
   fetchStoreListing,

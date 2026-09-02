@@ -29,7 +29,7 @@ The three ways to do that:
 problem: the population is a handful of people, and a second permission model to keep in step with
 the first is how one of them drifts out of date.
 
-**What it grants is exactly three things:**
+**What it grants is exactly four things:**
 
 - Reading across organizations on the platform surface — finding a user, seeing which organizations
   they belong to. Enough to answer "who is this and where do I look".
@@ -38,12 +38,22 @@ the first is how one of them drifts out of date.
   Android identity a reviewed listing publishes anonymously. Tenant roles cannot grant this: store
   listings are global and unowned, so evaluating their moderation against an arbitrary
   organization's wildcard would let any organization owner rewrite the public catalogue.
+- Starting a private production-acceptance project for a blocked signed catalogue template, but
+  only inside an organization where the same caller independently holds `project:create`. This is
+  the bridge between "not public before production evidence" and "ordinary users cannot install a
+  draft"; it neither changes listing readiness nor bypasses tenant authorization.
 
-**It grants no direct write into a customer's project data.** The catalogue association controls
+**It grants no unscoped write into a customer's project data.** The catalogue association controls
 global discovery; it does not edit the selected project, artifact, or runtime. There is no admin
 route that edits a project, changes a plan, or rotates a credential. Every such change is made _as
 the customer_, through a session that records who was behind it — which means it lands in the
 customer's own audit trail, visible to them, rather than in a private admin log they cannot see.
+
+The one direct project creation is the signed-template acceptance bridge. It requires both admin
+authentication and the organization's ordinary `project:create` grant, creates only a private
+repository, and records `admin:store:acceptance-project:create` with the reason and immutable
+catalogue provenance in that organization's audit trail. An admin should use an operator-owned
+acceptance organization; `is_admin` alone cannot target somebody else's organization.
 
 ### How impersonation works
 
@@ -102,8 +112,9 @@ are the two questions an incident review asks, and both are that one index.
   customer can read it.
 - A platform admin who leaves cannot take the evidence with them: both new columns are
   `ON DELETE RESTRICT`, like every other reference to `user`.
-- There is no admin write API to build, and no second authorization model to keep correct. That is
-  the point — the surface that does not exist cannot be got wrong.
+- The only admin-originated project write is the private signed-template acceptance bridge. It
+  composes with tenant RBAC rather than creating a second authorization model; every other project
+  change still requires impersonation.
 - **Not covered here:** an approval workflow for impersonation (a second admin signing off), and
   notifying the customer by email when their account is impersonated. Both are reasonable and both
   are policy decisions rather than missing mechanism; the audit trail is what either would build on.

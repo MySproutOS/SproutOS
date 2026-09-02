@@ -12,8 +12,9 @@ import { getSession } from "../middleware"
  *
  * What `is_admin` grants is defined in `docs/adr/0019-platform-admin.md` and is narrow on purpose:
  * read across organizations, audited impersonation, and curation of the platform-owned global
- * store catalogue. It grants no write into a customer's project data directly — every such change
- * is made as the customer, through a session that records who was really behind it.
+ * store catalogue. Its only direct project write is the separately tenant-authorized, private
+ * signed-template acceptance bridge; every other change is made as the customer through an
+ * impersonated session that records who was really behind it.
  */
 export const adminAuthMiddleware = createMiddleware<{
   Variables: {
