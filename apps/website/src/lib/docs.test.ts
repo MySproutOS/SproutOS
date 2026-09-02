@@ -40,7 +40,25 @@ describe("the documentation", () => {
   it("covers what the brief asks for", () => {
     const slugs = DOCS.map((doc) => doc.slug)
 
-    // The original operational pages plus the launch navigation and developer guides.
+    // The complete onboarding path, plus the original operational references.
+    expect(slugs).toContain("quickstart")
+    expect(slugs).toContain("organizations-and-access")
+    expect(slugs).toContain("projects-and-groups")
+    expect(slugs).toContain("backend-services")
+    expect(slugs).toContain("postgres")
+    expect(slugs).toContain("valkey")
+    expect(slugs).toContain("opensearch")
+    expect(slugs).toContain("workflows")
+    expect(slugs).toContain("workflow-editor")
+    expect(slugs).toContain("repository-workflows")
+    expect(slugs).toContain("agent-model-providers")
+    expect(slugs).toContain("agent-sandboxes")
+    expect(slugs).toContain("coding-agent-skill")
+    expect(slugs).toContain("deployments")
+    expect(slugs).toContain("environment-variables")
+    expect(slugs).toContain("domains-and-rollbacks")
+    expect(slugs).toContain("observability")
+    expect(slugs).toContain("store-and-updates")
     expect(slugs).toContain("background-workers")
     expect(slugs).toContain("limits")
     expect(slugs).toContain("billing")
@@ -80,10 +98,38 @@ describe("the documentation", () => {
     expect(text).toContain("0d5ce8bb74ecd598ae996c34d7d2cb5ac156a180")
     expect(text).toContain("c86dfdb7f055cb6cdf499b23f84ab91d640ca7a1")
     expect(text).not.toContain("sproutos-deploy-action@v1")
-    expect(text).toContain("~/.codex/skills/sproutos/skill.md")
-    expect(text).toContain("sandbox time or model usage")
+    expect(text).toContain("/docs/coding-agent-skill")
+    expect(text).toContain(".agents/skills")
     expect(text).not.toContain("sprout_os_deploy")
     expect(text).not.toContain("sproutos-apps")
+  })
+
+  it("distinguishes standalone services, repository workflows, and visual definitions", () => {
+    const services = searchableText(docBySlug("backend-services")!)
+    const workflows = searchableText(docBySlug("workflows")!)
+    const editor = searchableText(docBySlug("workflow-editor")!)
+
+    expect(services).toContain("standalone means")
+    expect(services).toContain("postgres, valkey, opensearch, and s3-compatible object storage")
+    expect(workflows).toContain("bullmq typescript")
+    expect(workflows).toContain("does not have a new definition button")
+    expect(workflows).toContain("does not open the visual editor")
+    expect(editor).toContain("exactly one trigger")
+    expect(editor).toContain("does not create a new version")
+  })
+
+  it("documents provider selection, sandbox isolation, and the reusable agent skill", () => {
+    const providers = searchableText(docBySlug("agent-model-providers")!)
+    const sandboxes = searchableText(docBySlug("agent-sandboxes")!)
+    const skill = searchableText(docBySlug("coding-agent-skill")!)
+
+    expect(providers).toContain("openai and openrouter credentials run through codex")
+    expect(providers).toContain("does not silently fall back")
+    expect(sandboxes).toContain("does not inherit production runtime secrets")
+    expect(sandboxes).toContain("sproutos/agent-")
+    expect(skill).toContain(".agents/skills/sproutos/skill.md")
+    expect(skill).toContain(".claude/skills/sproutos/skill.md")
+    expect(skill).toContain("instructions, not a credential")
   })
 
   it("documents the current CLI contract and direct Android distribution", () => {

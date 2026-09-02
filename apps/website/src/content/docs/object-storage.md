@@ -3,8 +3,8 @@ slug: object-storage
 title: Use object storage
 summary: Connect ordinary S3 SDKs to mutable application storage through the SproutOS storage proxy.
 audience: developer
-category: Building on SproutOS
-order: 2
+category: Backend services
+order: 14
 ---
 
 ## Mutable storage and static deployments

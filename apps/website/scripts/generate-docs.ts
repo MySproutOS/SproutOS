@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync, writeFileSync } from "node:fs"
+import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import Markdoc, { type RenderableTreeNode, Tag } from "@markdoc/markdoc"
 import { format } from "oxfmt"
@@ -150,6 +150,8 @@ const docs = readdirSync(directory)
     if (text === "") throw new Error(`${file} produced an empty search index`)
 
     return {
+      file,
+      source,
       slug: metadata.slug,
       title: metadata.title,
       summary: metadata.summary,
@@ -163,6 +165,28 @@ const docs = readdirSync(directory)
       content,
     }
   })
+
+/*
+  Public docs are one corpus. A Markdown link to a missing page otherwise builds successfully and
+  sends an onboarding reader to a 404; a local image typo does the same thing with an empty frame.
+  Validate both against the finished corpus so links may point forward to a file that sorts later.
+*/
+const publicSlugs = new Set([...RESERVED_SLUGS, ...docs.map((doc) => doc.slug)])
+for (const doc of docs) {
+  for (const match of doc.source.matchAll(/\]\(\/docs\/([a-z0-9-]+)(?:#[^)]+)?\)/g)) {
+    const slug = match[1]
+    if (slug !== undefined && !publicSlugs.has(slug)) {
+      throw new Error(`${doc.file} links to missing public doc "/docs/${slug}"`)
+    }
+  }
+
+  for (const match of doc.source.matchAll(/{%\s+image\s+[^%]*src="(\/[^"?#]+)"[^%]*%}/g)) {
+    const src = match[1]
+    if (src !== undefined && !existsSync(join(import.meta.dirname, "../public", src.slice(1)))) {
+      throw new Error(`${doc.file} references missing public image "${src}"`)
+    }
+  }
+}
 
 /*
   Two modules, deliberately.
@@ -179,7 +203,7 @@ const contentPath = join(directory, "../../lib/docs-content.generated.ts")
 const indexSource = `// Generated from src/content/docs/*.md by scripts/generate-docs.ts.
 // Metadata and search text only — safe to import from a client component.
 export const GENERATED_DOCS = ${JSON.stringify(
-  docs.map(({ content: _content, ...rest }) => rest),
+  docs.map(({ content: _content, file: _file, source: _source, ...rest }) => rest),
   null,
   2,
 )} as const

@@ -431,8 +431,10 @@ consumer into a workflow, and do not try to keep a permanent consumer process al
 
 Download the public skill from \`https://sproutos.me/skills/sproutos/SKILL.md\`.
 
-- Claude Code loads it from \`.claude/skills/sproutos/SKILL.md\` in the repository.
-- Codex loads an account-level copy from \`~/.codex/skills/sproutos/SKILL.md\`.
+- Codex loads a repository copy from \`.agents/skills/sproutos/SKILL.md\`, or a user copy from
+  \`~/.agents/skills/sproutos/SKILL.md\`.
+- Claude Code loads a repository copy from \`.claude/skills/sproutos/SKILL.md\`, or a user copy from
+  \`~/.claude/skills/sproutos/SKILL.md\`.
 - For an AGENTS.md-only harness, preserve the repository's existing \`AGENTS.md\` and add a short
   instruction to read the downloaded skill. Never replace the project's own instructions.
 

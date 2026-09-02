@@ -3,8 +3,8 @@ slug: background-workers
 title: Background workers and open connections
 summary: Return after each batch so idle connections do not keep consuming compute.
 audience: developer
-category: Building on SproutOS
-order: 3
+category: Workflows
+order: 21
 ---
 
 ## How work starts

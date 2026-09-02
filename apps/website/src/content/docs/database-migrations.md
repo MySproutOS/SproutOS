@@ -4,7 +4,7 @@ title: Run database migrations
 summary: Run production migrations from GitHub Actions before deploying every project that depends on them.
 audience: developer
 category: Deploying
-order: 2
+order: 14
 ---
 
 ## The workflow owns production migrations

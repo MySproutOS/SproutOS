@@ -49,8 +49,9 @@ export const AUDIENCE_SLUG: Record<DocAudience, string> = {
 }
 
 export const AUDIENCE_SUMMARY: Record<DocAudience, string> = {
-  user: "Running the apps you have, what they cost, and where everything lives.",
-  developer: "Deploying your own code, connecting to services, and building on the API.",
+  user: "From your first project through services, workflows, hosted agents, updates, and billing.",
+  developer:
+    "Deploying code, configuring runtime services, operating workflows, and giving coding agents the platform contract.",
 }
 
 export type DocCategory = { name: string; docs: Doc[] }

@@ -4,7 +4,7 @@ title: Understand billing
 summary: Read service usage, credit, overhead, and queue residency without hidden rounding.
 audience: user
 category: Billing & limits
-order: 2
+order: 50
 ---
 
 ## Usage and credit
@@ -19,7 +19,10 @@ Queue residency is queued payload bytes multiplied by how long they remain queue
 
 Mutable object storage records write and list requests, read requests, bytes delivered outside AWS, and stored byte-time. Deletes are free. These dimensions have no SproutOS markup.
 
-Spendable credit includes a protected reserve for 48 hours of the latest measured object-storage bytes. When credit reaches that floor, new service requests stop while the funded retention window preserves the stored data. Adding credit clears the cutoff.
+Spendable credit includes a protected reserve for 48 hours of the latest measured retained data.
+When credit reaches that floor, active use is suspended while the funded retention window preserves
+the data. New deployments, workflow runs, Agent work, and service requests are refused. Adding
+credit clears the cutoff and restores active use.
 
 ## Platform fees
 

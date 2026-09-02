@@ -4,7 +4,7 @@ title: Limits
 summary: Function duration, request size, memory, and concurrency.
 audience: user
 category: Billing & limits
-order: 3
+order: 51
 ---
 
 ## Runtime

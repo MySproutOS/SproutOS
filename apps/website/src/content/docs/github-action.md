@@ -4,7 +4,7 @@ title: Deploy from GitHub or your local agent
 summary: Use the same sprout deployment contract from GitHub Actions, a terminal, or a coding-agent harness.
 audience: developer
 category: Deploying
-order: 3
+order: 11
 ---
 
 ## GitHub Actions
@@ -88,23 +88,13 @@ plus `SHA256SUMS` and `sprout-v0.2.1-manifest.json`. Verify the selected archive
 The action also verifies GitHub's artifact attestation and the release's exact source revision
 before it executes the binary.
 
-## Give a local coding agent the SproutOS skill
+## Give a coding agent the same contract
 
-Download [the public SproutOS skill](/skills/sproutos/SKILL.md). It teaches an agent the project,
-service, environment, migration, template, and deployment boundaries without starting a paid
-SproutOS sandbox.
-
-- Claude Code: save it as `.claude/skills/sproutos/SKILL.md` in the repository.
-- Codex: save it as `~/.codex/skills/sproutos/SKILL.md` for your account.
-- An `AGENTS.md`-only harness: preserve the existing file and add a short instruction telling the
-  agent to read the downloaded `SKILL.md`; do not replace repository instructions.
-
-A local agent uses your computer and the model account configured in your harness. SproutOS does
-not charge sandbox time or model usage for that work. Databases, deployments, storage, and other
-SproutOS resources created by the agent are still metered normally.
-
-The skill is instructions, not a credential. Authenticate the `sprout` CLI yourself, or set
-`SPROUTOS_TOKEN` only in a trusted headless environment.
+Install [the SproutOS coding-agent skill](/docs/coding-agent-skill) in `.agents/skills` for Codex or
+`.claude/skills` for Claude Code. It teaches the agent the project, service, environment, migration,
+template, and deployment boundaries without creating a paid hosted sandbox. A local agent still
+uses the same `sprout deploy my-web-project` command and resources it creates on SproutOS remain
+metered normally.
 
 ## Deployment templates
 

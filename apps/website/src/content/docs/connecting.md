@@ -4,7 +4,7 @@ title: Connect to services
 summary: Use tenant-scoped credentials for Postgres, Valkey, search, and object storage.
 audience: developer
 category: Deploying
-order: 1
+order: 13
 ---
 
 ## Tenant-scoped credentials
@@ -20,4 +20,6 @@ Object storage is the exception. Its secret is derived rather than stored, so an
 - OpenSearch uses `ELASTICSEARCH_URL` and automatically scopes index names.
 - Object storage uses `S3_ENDPOINT`, `S3_REGION`, `S3_BUCKET_NAME`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`, and path-style addressing.
 
-All endpoints pass through tenant-enforcing SproutOS proxies. Close connections before a function returns.
+All endpoints pass through tenant-enforcing SproutOS proxies. Close connections before a function
+returns. For creation, attachment, standalone ownership, and rotation, start with [Backend
+services](/docs/backend-services).
