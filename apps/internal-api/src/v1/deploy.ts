@@ -20,6 +20,7 @@ import {
   runMigration,
   runtimeForPreset,
   SUPPORTED_RUNTIMES,
+  webAdapterForRelease,
 } from "@lib/lambda"
 import { verifyGitHubOidcToken } from "@lib/oauth"
 import { db } from "@sproutos/db"
@@ -702,11 +703,12 @@ const deploy: Hono = new Hono()
           one combination that fails silently — the wrapper set with no server to wrap, or a server
           published as a handler, which is the state every deployment in this account was in.
 
-          An explicit `handler` overrides the preset's, so a customer who supplies their own Lambda
-          entry point on a `next` build gets it — and then the adapter would be wrong, which is why
-          it is off in that case.
+          A different explicit `handler` overrides the preset's, so a customer who supplies their
+          own Lambda entry point on a `next` build gets it — and then the adapter would be wrong,
+          which is why it is off in that case. Repeating the preset's exact handler is not an
+          override; generated repositories do that so the complete runtime contract stays visible.
         */
-        webAdapter: defaults.webAdapter && json.handler === undefined,
+        webAdapter: webAdapterForRelease(json.preset, json.handler),
         gitMessage: json.message ?? null,
         migrationArtifactKey: json.migration_key ?? null,
         migrationHandler: json.migration_handler ?? null,

@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest"
 
-import { runtimeForPreset } from "./runtimes"
+import { runtimeForPreset, webAdapterForRelease } from "./runtimes"
 import {
   DEFAULT_WEB_ADAPTER_LAYER_VERSION,
   LAMBDA_ARCHITECTURE,
@@ -73,17 +73,36 @@ describe("webAdapterEnv", () => {
     expect(env.AWS_LWA_PORT).toBe(env.PORT)
     expect(env.AWS_LWA_ERROR_STATUS_CODES).toBe("500-599")
   })
+
+  it("lets a provided runtime start its own bootstrap while retaining the adapter ports", () => {
+    const env = webAdapterEnv("provided.al2023")
+    expect(env.AWS_LAMBDA_EXEC_WRAPPER).toBeUndefined()
+    expect(env.AWS_LWA_PORT).toBe(env.PORT)
+    expect(env.PORT).toBe("8080")
+  })
 })
 
 describe("runtimeForPreset", () => {
   it("adapts the presets that produce a server, and only those", () => {
     expect(runtimeForPreset("next").webAdapter).toBe(true)
     expect(runtimeForPreset("hono").webAdapter).toBe(true)
+    expect(runtimeForPreset("web")).toEqual({
+      runtime: "provided.al2023",
+      handler: "bootstrap",
+      webAdapter: true,
+    })
     // A static build has no server to adapt.
     expect(runtimeForPreset("static").webAdapter).toBe(false)
     // An unknown preset ships from the action's own repository. It must not silently become an
     // adapted build, because a handler-shaped archive with the wrapper set fails every invocation.
     expect(runtimeForPreset("something-new").webAdapter).toBe(false)
+  })
+
+  it("keeps the adapter when an explicit handler equals the preset convention", () => {
+    expect(webAdapterForRelease("web", undefined)).toBe(true)
+    expect(webAdapterForRelease("web", "bootstrap")).toBe(true)
+    expect(webAdapterForRelease("next", "run.sh")).toBe(true)
+    expect(webAdapterForRelease("web", "index.handler")).toBe(false)
   })
 
   it("gives an adapted preset the startup script as its handler", () => {

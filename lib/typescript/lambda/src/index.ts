@@ -34,6 +34,7 @@ export {
   runtimeForPreset,
   SUPPORTED_RUNTIMES,
   type SupportedRuntime,
+  webAdapterForRelease,
 } from "./runtimes"
 export {
   MIGRATION_TIMEOUT_S,

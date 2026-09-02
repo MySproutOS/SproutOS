@@ -189,6 +189,29 @@ describe("the telemetry endpoint", () => {
   })
 })
 
+describe("web adapter runtime environment", () => {
+  it("does not replace a provided runtime's own bootstrap with the managed-runtime wrapper", () => {
+    vi.stubEnv("LOG_TOKEN_SECRET", "test-log-token-secret")
+    const environment = telemetryEnv({
+      projectId,
+      organizationId: "01912d3f-8a2b-7c4d-9e1f-2a3b4c5d6e7f",
+      logEndpoint: "https://example.sproutos.run/_sproutos/logs",
+      bucket: BUCKET,
+      key: "unused.zip",
+      handler: "bootstrap",
+      runtime: "provided.al2023",
+      memoryMb: 128,
+      timeoutS: 10,
+      roleArn: ROLE,
+      webAdapterLayerArn: "arn:aws:lambda:us-east-1:753240598075:layer:LambdaAdapterLayerArm64:29",
+    })
+
+    expect(environment.AWS_LAMBDA_EXEC_WRAPPER).toBeUndefined()
+    expect(environment.AWS_LWA_PORT).toBe("8080")
+    expect(environment.PORT).toBe("8080")
+  })
+})
+
 if (reachable) {
   try {
     await s3.send(new CreateBucketCommand({ Bucket: BUCKET }))

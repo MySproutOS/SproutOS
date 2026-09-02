@@ -293,7 +293,7 @@ export function telemetryEnv(input: PublishInput): Record<string, string> {
       leave the adapter forwarding to the wrong port and every invocation timing out with nothing in
       the log to say why.
     */
-    ...(input.webAdapterLayerArn === undefined ? {} : webAdapterEnv()),
+    ...(input.webAdapterLayerArn === undefined ? {} : webAdapterEnv(input.runtime)),
   }
 }
 

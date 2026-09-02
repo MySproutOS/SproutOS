@@ -25,12 +25,11 @@
  * Three things together, and all three are required:
  *
  * 1. The **layer**, which puts `/opt/bootstrap` in the image.
- * 2. `AWS_LAMBDA_EXEC_WRAPPER=/opt/bootstrap`, which makes Lambda run that wrapper instead of the
- *    Node runtime. Without it the layer is present and inert — the function still looks for a
- *    handler export and still fails, which is the failure mode worth naming because the layer being
- *    attached makes it look configured.
- * 3. The **handler as a startup script** — `run.sh` in the archive, which `exec`s the server. The
- *    wrapper runs it and waits for the port to answer.
+ * 2. On a managed runtime, `AWS_LAMBDA_EXEC_WRAPPER=/opt/bootstrap`, which makes Lambda run the
+ *    adapter wrapper instead of looking for a handler export. On `provided.*`, the archive's own
+ *    `bootstrap` executable starts directly and the layer runs the adapter as an extension.
+ * 3. The **application entry point** — `run.sh` for a managed runtime, or the executable
+ *    `bootstrap` for a provided runtime. The adapter waits for that process's port to answer.
  */
 
 /** Where the adapter listens for the application. Next and Hono are told to bind here. */
@@ -108,9 +107,9 @@ export function webAdapterLayerArn(region: string): string | undefined {
  * `AWS_LWA_PORT` to know where to send the request. Setting only one produces a function that
  * starts, listens somewhere, and times out on every invocation.
  */
-export function webAdapterEnv(): Record<string, string> {
+export function webAdapterEnv(runtime = "nodejs22.x"): Record<string, string> {
   return {
-    AWS_LAMBDA_EXEC_WRAPPER: "/opt/bootstrap",
+    ...(runtime.startsWith("provided.") ? {} : { AWS_LAMBDA_EXEC_WRAPPER: "/opt/bootstrap" }),
     // Without this, an adapted HTTP server can return 500 and Lambda still records the invocation
     // as successful. Queue drains are asynchronous Lambda events, so Lambda's two built-in retries
     // only happen when the adapter translates the response into an invocation error.
