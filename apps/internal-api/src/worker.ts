@@ -40,7 +40,7 @@ if (process.env.NODE_ENV === "production") {
   // API shares this bundle but never imports the addon; only the worker owns template execution.
   const { nativeRuntimeStatus } = await import("@sproutos/sprout-node")
   const runtime = nativeRuntimeStatus()
-  console.log(`[worker] native templates available for ${runtime.pluginTarget}`)
+  console.log(`[worker] native template dependencies present for ${runtime.pluginTarget}`)
 }
 
 console.log(`[worker] ${workerId} started`)

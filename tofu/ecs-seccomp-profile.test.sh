@@ -42,8 +42,10 @@ for syscall in unshare setns; do
 done
 
 assert_equal "$(jq \
-  '[.syscalls[] | select(.action == "SCMP_ACT_ALLOW" and .names == ["clone"] and .args == [{"index":0,"op":"SCMP_CMP_EQ","value":2114060305}])] | length' \
+  '[.syscalls[] | select(.action == "SCMP_ACT_ALLOW" and .names == ["clone"] and .args == [{"index":0,"op":"SCMP_CMP_EQ","value":1040318481}])] | length' \
   "$profile")" 1 'argument-scoped Bubblewrap clone rule changed'
+grep -Fq '"--share-net"' "$SCRIPT_DIR/../packages/sprout-core/src/isolation.rs" || \
+  fail 'Bubblewrap network-namespace choice changed without reviewing its clone flags'
 assert_equal "$(jq -c \
   '[.syscalls[] | select(.action == "SCMP_ACT_ALLOW" and .names == ["mount"]) | .args[0].value] | sort' \
   "$profile")" '[6,53248,311296,573440,2134054,2134055,3236810752]' \

@@ -310,6 +310,7 @@ export async function runProvision(
           branch: created.defaultBranch,
           upstreamFullName: repository.upstreamFullName,
           upstreamBranch: repository.upstreamDefaultBranch ?? "main",
+          upstreamCommit: template?.manifest.repository.commit,
           token: populatedCredential.token,
         })
       }

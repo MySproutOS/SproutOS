@@ -9,6 +9,6 @@ TOFU_DIR="$ROOT/tofu" "$ROOT/bin/render-ecs-launch-template-user-data.sh" sprout
 
 test "$(wc -c <"$rendered" | tr -d ' ')" = 21839
 test "$(shasum -a 256 "$rendered" | awk '{print $1}')" = \
-  9890e7851f71411cefa6078953821d6f3d805d9f12be3473090ef1f4fbba627c
+  a4ba09fb3fd93c2e9e13d89001f415cd95629afd788c8d0a7f8e4074444e7836
 
 echo "ECS launch-template renderer matches the reviewed decoded production bootstrap"

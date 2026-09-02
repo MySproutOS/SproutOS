@@ -308,6 +308,19 @@ resource "aws_autoscaling_group" "ecs" {
     ignore_changes = [desired_capacity]
   }
 
+  # A launch-template revision changes the host boundary itself: AMI, bootstrap, Docker policy or
+  # the template-plugin seccomp allowlist. Keep both serving hosts healthy while the reserved third
+  # slot comes up, then replace the old hosts one at a time so a corrected boundary actually reaches
+  # production instead of existing only in `$Latest`.
+  instance_refresh {
+    strategy = "Rolling"
+    preferences {
+      min_healthy_percentage = 100
+      max_healthy_percentage = 150
+      instance_warmup        = 300
+    }
+  }
+
   tag {
     key                 = "AmazonECSManaged"
     value               = "true"
