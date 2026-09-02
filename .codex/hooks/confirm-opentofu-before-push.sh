@@ -15,10 +15,5 @@ fi
 
 jq -n '
 {
-  systemMessage: "After confirming yes, retry the command with SPROUT_OPENTOFU_APPLIED=1.",
-  hookSpecificOutput: {
-    hookEventName: "PreToolUse",
-    permissionDecision: "deny",
-    permissionDecisionReason: "did you apply opentofu before git push?"
-  }
+  systemMessage: "Reminder: confirm whether production OpenTofu needs to be planned and applied before pushing or merging this change."
 }'
