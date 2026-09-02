@@ -4,6 +4,7 @@ import { fetchStoreListingTag } from "@lib/dao/storeListingTag/fetch"
 import { db } from "@sproutos/db"
 import type { Metadata } from "next"
 import Link from "next/link"
+import { AndroidBadge } from "../_components/store-badge"
 import { ListingCard } from "./_components/listing-card"
 import { StoreFilters } from "./_components/store-filters"
 import { isFiltered, parseStoreQuery, storeHref, type StoreQuery } from "./query"
@@ -75,6 +76,10 @@ export default async function StorePage({
             into your account, provisions the database and services it declares, and deploys it.
             Then you describe what you want changed, in a sentence.
           </p>
+
+          <div className="mt-7">
+            <AndroidBadge tone="filled" />
+          </div>
 
           <StoreFilters categories={categories} tags={tagCloud} query={query} />
         </div>

@@ -32,6 +32,8 @@ export type AndroidApp = {
   packageName: string
   label: string
   summary: string
+  /** Human-readable store category. Older clients safely ignore this optional field. */
+  category?: string
   versionName: string
   /** Android's own monotonic version. An install refuses to downgrade, so this must only rise. */
   versionCode: number
@@ -105,6 +107,7 @@ export type AppRow = {
   packageName: string | null
   label: string
   summary: string | null
+  category: string | null
   versionName: string | null
   versionCode: number | null
   sha256: string | null
@@ -143,6 +146,7 @@ export function toApp(row: AppRow, signedUrlFor: (key: string) => string): Andro
     packageName: row.packageName,
     label: row.label,
     summary: row.summary ?? "",
+    ...(row.category === null ? {} : { category: row.category }),
     versionName: row.versionName,
     versionCode: row.versionCode,
     sha256: row.sha256,
