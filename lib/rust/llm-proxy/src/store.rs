@@ -1,11 +1,11 @@
 //! Resolving an access token to a session, against the control-plane database.
 //!
-//! The second connection this process makes — to the control plane, not to a model provider — and
-//! it must be TLS for the same reason `service-credentials` says so: `rds.force_ssl` is `1`, and a
-//! proxy that gets this wrong stops the router. The TLS connector is shared with that crate rather
-//! than rebuilt here, so there is one place to get the root store wrong instead of two.
+//! This store reaches the control plane, not a model provider, and that connection must be TLS for
+//! the same reason `service-credentials` says so: `rds.force_ssl` is `1`, and a proxy that gets this
+//! wrong stops the router. A standalone LLM proxy builds through that crate's TLS pool factory; the
+//! combined router injects its one process-wide pool instead.
 
-use deadpool_postgres::{Manager, ManagerConfig, Pool, RecyclingMethod};
+use deadpool_postgres::Pool;
 use sha2::{Digest, Sha256};
 
 use crate::seal;
@@ -36,26 +36,25 @@ pub struct SessionStore {
 }
 
 impl SessionStore {
+    pub fn from_pool(pool: Pool, key: Vec<u8>, platform_secret: Option<String>) -> Self {
+        Self {
+            pool,
+            key,
+            platform_secret,
+        }
+    }
+
     pub fn connect(
         database_url: &str,
         size: usize,
         key: Vec<u8>,
         platform_secret: Option<String>,
     ) -> anyhow::Result<Self> {
-        let config: tokio_postgres::Config =
-            sproutos_service_credentials::normalise_url(database_url).parse()?;
-        let manager = Manager::from_config(
-            config,
-            sproutos_service_credentials::tls_connector()?,
-            ManagerConfig {
-                recycling_method: RecyclingMethod::Fast,
-            },
-        );
-        Ok(Self {
-            pool: Pool::builder(manager).max_size(size).build()?,
+        Ok(Self::from_pool(
+            sproutos_service_credentials::control_plane_pool(database_url, size)?,
             key,
             platform_secret,
-        })
+        ))
     }
 
     /// Fail at boot rather than on the first agent turn.

@@ -213,7 +213,9 @@ resource "aws_iam_role_policy" "deploy" {
         Sid    = "FillTheIdleColour"
         Effect = "Allow"
         /*
-          The two mutating calls, scoped to this platform's own groups.
+          The mutating calls, scoped to this platform's own groups. Suspending only
+          `AlarmNotification` keeps delayed target-group metrics from resurrecting the drained
+          colour; resuming it on the confirmed live colour restores target tracking.
 
           `TerminateInstanceInAutoScalingGroup` is here because filling the idle colour has to
           *replace* what is already running, not merely count it: an instance reads the release
@@ -221,7 +223,9 @@ resource "aws_iam_role_policy" "deploy" {
           looks.
         */
         Action = [
+          "autoscaling:ResumeProcesses",
           "autoscaling:SetDesiredCapacity",
+          "autoscaling:SuspendProcesses",
           "autoscaling:TerminateInstanceInAutoScalingGroup",
         ]
         Resource = [

@@ -19,6 +19,7 @@ use std::sync::Arc;
 use anyhow::Context as _;
 use axum::Router as AxumRouter;
 use axum::routing::any;
+use deadpool_postgres::Pool;
 use tokio::net::TcpListener;
 use tokio::task::JoinHandle;
 
@@ -27,7 +28,7 @@ use tokio::task::JoinHandle;
 /// Returns `None` when `VALKEY_PROXY_BACKEND` is unset — not an error. The router's own job is
 /// resolving hostnames to functions, and that works with no tenant Valkey anywhere.
 pub async fn valkey(
-    database_url: &str,
+    database_pool: &Pool,
     master_queue_backend: Option<String>,
 ) -> anyhow::Result<Option<JoinHandle<()>>> {
     let Ok(backend) = std::env::var("VALKEY_PROXY_BACKEND") else {
@@ -46,15 +47,9 @@ pub async fn valkey(
     */
     let backend = Arc::new(backend);
 
-    let pool_size: usize = std::env::var("VALKEY_PROXY_DB_POOL")
-        .ok()
-        .and_then(|value| value.parse().ok())
-        .unwrap_or(4);
-
-    let store = Arc::new(valkey_proxy::CredentialStore::connect(
-        database_url,
-        pool_size,
-    )?);
+    let store = Arc::new(valkey_proxy::CredentialStore::from_pool(
+        database_pool.clone(),
+    ));
     // Checked at boot, not on the first tenant's connection: a bad URL should stop a deploy rather
     // than turn every authentication into an operational error.
     store
@@ -177,22 +172,16 @@ pub async fn valkey(
 }
 
 /// Start the OpenSearch split, if this deployment has one.
-pub async fn search(database_url: &str) -> anyhow::Result<Option<JoinHandle<()>>> {
+pub async fn search(database_pool: &Pool) -> anyhow::Result<Option<JoinHandle<()>>> {
     let Ok(upstream) = std::env::var("SEARCH_PROXY_UPSTREAM") else {
         return Ok(None);
     };
 
     let listen = std::env::var("SEARCH_PROXY_LISTEN").unwrap_or_else(|_| "0.0.0.0:9200".into());
 
-    let pool_size: usize = std::env::var("SEARCH_PROXY_DB_POOL")
-        .ok()
-        .and_then(|value| value.parse().ok())
-        .unwrap_or(8);
-
-    let store = Arc::new(sproutos_service_credentials::CredentialStore::connect(
-        database_url,
-        pool_size,
-    )?);
+    let store = Arc::new(sproutos_service_credentials::CredentialStore::from_pool(
+        database_pool.clone(),
+    ));
     store
         .check()
         .await
@@ -302,7 +291,7 @@ fn search_meter(
 /// Started when there is something to connect onward to — either a shared cluster
 /// (`PG_PROXY_BACKEND_PASSWORD`) or the control plane's per-tenant resolver
 /// (`PG_PROXY_RESOLVE_URL`). Neither, and this returns `None` exactly as the other two do.
-pub async fn postgres(database_url: &str) -> anyhow::Result<Option<JoinHandle<()>>> {
+pub async fn postgres(database_pool: &Pool) -> anyhow::Result<Option<JoinHandle<()>>> {
     let resolve = pg_proxy::resolve::resolve_config_from_env();
     let backend_password = std::env::var("PG_PROXY_BACKEND_PASSWORD").ok();
 
@@ -312,15 +301,9 @@ pub async fn postgres(database_url: &str) -> anyhow::Result<Option<JoinHandle<()
 
     let listen = std::env::var("PG_PROXY_LISTEN").unwrap_or_else(|_| "0.0.0.0:5432".into());
 
-    let pool_size: usize = std::env::var("PG_PROXY_DB_POOL")
-        .ok()
-        .and_then(|value| value.parse().ok())
-        .unwrap_or(4);
-
-    let store = Arc::new(sproutos_service_credentials::CredentialStore::connect(
-        database_url,
-        pool_size,
-    )?);
+    let store = Arc::new(sproutos_service_credentials::CredentialStore::from_pool(
+        database_pool.clone(),
+    ));
     store
         .check()
         .await
@@ -427,7 +410,7 @@ pub async fn postgres(database_url: &str) -> anyhow::Result<Option<JoinHandle<()
 /// **The secret is checked at boot, not on the first agent turn.** A router with a missing or
 /// malformed `LLM_PROXY_SECRET` cannot open any session, so every turn would fail — better to stop
 /// the deploy than to serve traffic while one split silently cannot work.
-pub async fn llm(database_url: &str) -> anyhow::Result<Option<JoinHandle<()>>> {
+pub async fn llm(database_pool: &Pool) -> anyhow::Result<Option<JoinHandle<()>>> {
     let Ok(listen) = std::env::var("LLM_PROXY_LISTEN") else {
         return Ok(None);
     };
@@ -435,17 +418,11 @@ pub async fn llm(database_url: &str) -> anyhow::Result<Option<JoinHandle<()>>> {
     let key = sproutos_llm_proxy::seal::key_from_env()
         .context("the LLM proxy cannot open sandbox credentials")?;
 
-    let pool_size: usize = std::env::var("LLM_PROXY_DB_POOL")
-        .ok()
-        .and_then(|value| value.parse().ok())
-        .unwrap_or(4);
-
-    let store = sproutos_llm_proxy::store::SessionStore::connect(
-        database_url,
-        pool_size,
+    let store = sproutos_llm_proxy::store::SessionStore::from_pool(
+        database_pool.clone(),
         key,
         std::env::var("OPENAI_KEY").ok().filter(|it| !it.is_empty()),
-    )?;
+    );
     store
         .check()
         .await
@@ -531,7 +508,7 @@ pub async fn llm(database_url: &str) -> anyhow::Result<Option<JoinHandle<()>>> {
 /// A public endpoint that accepts credentials while its lifecycle database is unavailable would
 /// turn a control-plane outage into unrestricted internet access, so that configuration is fatal.
 pub async fn forward_proxy_service(
-    database_url: &str,
+    database_pool: &Pool,
 ) -> anyhow::Result<Option<Arc<sproutos_sandbox_forward_proxy::SandboxForwardProxy>>> {
     use base64::Engine as _;
 
@@ -551,14 +528,9 @@ pub async fn forward_proxy_service(
         );
     }
 
-    let pool_size = std::env::var("FORWARD_PROXY_DB_POOL")
-        .ok()
-        .and_then(|value| value.parse().ok())
-        .unwrap_or(8);
-    let authorizer = Arc::new(crate::sandbox_egress::SandboxAuthorizer::connect(
-        database_url,
-        pool_size,
-    )?);
+    let authorizer = Arc::new(crate::sandbox_egress::SandboxAuthorizer::from_pool(
+        database_pool.clone(),
+    ));
     authorizer
         .check()
         .await

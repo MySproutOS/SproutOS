@@ -113,15 +113,17 @@ async fn main() -> anyhow::Result<()> {
     };
 
     let database_url = std::env::var("DATABASE_URL").context("DATABASE_URL is not set")?;
-    let route_pool_size = std::env::var("ROUTER_ROUTE_DB_POOL")
+    let database_pool_size = std::env::var("ROUTER_DB_POOL")
         .ok()
         .map(|value| value.parse::<usize>())
         .transpose()
-        .context("ROUTER_ROUTE_DB_POOL must be a positive integer")?
+        .context("ROUTER_DB_POOL must be a positive integer")?
         .unwrap_or(4);
-    let durable_routes = Arc::new(router::resolve::PostgresRoutes::connect(
-        &database_url,
-        route_pool_size,
+    let database_pool =
+        sproutos_service_credentials::control_plane_pool(&database_url, database_pool_size)
+            .context("the router cannot create its shared control-plane database pool")?;
+    let durable_routes = Arc::new(router::resolve::PostgresRoutes::from_pool(
+        database_pool.clone(),
         std::env::var("AWS_REGION").unwrap_or_else(|_| "us-east-1".into()),
         std::env::var("AWS_ACCOUNT_ID").context("AWS_ACCOUNT_ID is not set")?,
     )?);
@@ -175,7 +177,7 @@ async fn main() -> anyhow::Result<()> {
       not there. A deployment with no tenant Valkey and no OpenSearch — a developer working on
       request routing — starts with neither and says so in the log.
     */
-    let forward_proxy = router::listeners::forward_proxy_service(&database_url).await?;
+    let forward_proxy = router::listeners::forward_proxy_service(&database_pool).await?;
     let certificate_runtime = if std::env::var("ROUTER_TLS_EDGE_LISTEN").is_ok() {
         let poll_interval = std::time::Duration::from_secs(
             std::env::var("ROUTER_CERTIFICATE_POLL_SECONDS")
@@ -211,13 +213,13 @@ async fn main() -> anyhow::Result<()> {
     let edge_readiness = Arc::new(router::edge_readiness::EdgeReadiness::default());
     let splits = [
         router::listeners::valkey(
-            &database_url,
+            &database_pool,
             master_queue_enabled.then(|| valkey_url.clone()),
         )
         .await?,
-        router::listeners::search(&database_url).await?,
-        router::listeners::postgres(&database_url).await?,
-        router::listeners::llm(&database_url).await?,
+        router::listeners::search(&database_pool).await?,
+        router::listeners::postgres(&database_pool).await?,
+        router::listeners::llm(&database_pool).await?,
         router::listeners::forward_proxy_listener(forward_proxy.clone()).await?,
         router::acme_http::start_from_env(acme_manager, Arc::clone(&edge_readiness)).await?,
         router::edge::start_from_env(

@@ -4,7 +4,7 @@
 //! still live. Deliberately uncached: stop and delete are security boundaries, not hints.
 
 use async_trait::async_trait;
-use deadpool_postgres::{Manager, ManagerConfig, Pool, RecyclingMethod};
+use deadpool_postgres::Pool;
 use sproutos_sandbox_forward_proxy::{Authorizer, AuthzError, SandboxAuthorization, SandboxState};
 use std::io;
 use std::net::IpAddr;
@@ -56,19 +56,14 @@ impl sproutos_sandbox_forward_proxy::Resolver for EgressResolver {
 }
 
 impl SandboxAuthorizer {
+    pub fn from_pool(pool: Pool) -> Self {
+        Self { pool }
+    }
+
     pub fn connect(url: &str, size: usize) -> anyhow::Result<Self> {
-        let config: tokio_postgres::Config =
-            sproutos_service_credentials::normalise_url(url).parse()?;
-        let manager = Manager::from_config(
-            config,
-            sproutos_service_credentials::tls_connector()?,
-            ManagerConfig {
-                recycling_method: RecyclingMethod::Fast,
-            },
-        );
-        Ok(Self {
-            pool: Pool::builder(manager).max_size(size).build()?,
-        })
+        Ok(Self::from_pool(
+            sproutos_service_credentials::control_plane_pool(url, size)?,
+        ))
     }
 
     pub async fn check(&self) -> anyhow::Result<()> {

@@ -62,7 +62,7 @@ case "$1 $2" in
       echo 1
     fi
     ;;
-  "autoscaling set-desired-capacity"|"autoscaling terminate-instance-in-auto-scaling-group")
+  "autoscaling set-desired-capacity"|"autoscaling terminate-instance-in-auto-scaling-group"|"autoscaling suspend-processes")
     echo "$*" >> "$STUB_MUTATIONS"
     ;;
 esac
@@ -105,6 +105,10 @@ for short in router search storage llm pg valkey edge egress edge-http; do
     "$(grep -c "^arn:$short-green$" "$STUB_HEALTH_CALLS")"
 done
 check "reports that every group passed" "1" "$(grep -c 'healthy target(s) in every group' <<<"$out")"
+check "suspends idle target tracking before filling the router" "1" \
+  "$(grep -c 'suspend-processes --auto-scaling-group-name sproutos-router-green --scaling-processes AlarmNotification' "$STUB_MUTATIONS")"
+check "suspends target tracking before setting idle capacity" "1" \
+  "$(awk '/suspend-processes/{s=NR} /set-desired-capacity/{c=NR} END{print (s < c ? 1 : 0)}' "$STUB_MUTATIONS")"
 
 # The listener rule can be created before port 9000 is enrolled in Auto Scaling health. That staged
 # state must not fail an ordinary router deploy or pretend the empty target group was checked.
@@ -147,6 +151,8 @@ check "checks the website and API target groups" "2" \
   "$(wc -l < "$STUB_HEALTH_CALLS" | tr -d ' ')"
 check "checks web on the idle colour" "1" "$(grep -c '^arn:web-green$' "$STUB_HEALTH_CALLS")"
 check "checks api on the idle colour" "1" "$(grep -c '^arn:api-green$' "$STUB_HEALTH_CALLS")"
+check "suspends idle target tracking before filling the website" "1" \
+  "$(grep -c 'suspend-processes --auto-scaling-group-name sproutos-web-green --scaling-processes AlarmNotification' "$STUB_MUTATIONS")"
 
 if [ "$failures" -gt 0 ]; then
   echo "$failures check(s) failed" >&2
