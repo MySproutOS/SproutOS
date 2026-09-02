@@ -2619,7 +2619,7 @@ export type PostV1OrgsByOrgSlugProjectsByProjectIdAndroidVerifyErrors = {
    */
   404: ErrorResponseT
   /**
-   * Commit is not production HEAD
+   * Commit is not production HEAD or the repository cannot be verified
    */
   409: ErrorResponseT
 }
@@ -5468,7 +5468,7 @@ export type GetV1OrgsByOrgSlugStoreListingsData = {
 
 export type GetV1OrgsByOrgSlugStoreListingsErrors = {
   /**
-   * Caller lacks store:listing:moderate
+   * Caller is not a platform admin or lacks store:listing:moderate
    */
   403: ErrorResponseT
   /**
@@ -5530,7 +5530,7 @@ export type PostV1OrgsByOrgSlugStoreListingsByListingIdPublishErrors = {
    */
   400: ErrorResponseT
   /**
-   * Caller lacks store:listing:moderate
+   * Caller is not a platform admin or lacks store:listing:moderate
    */
   403: ErrorResponseT
   /**
@@ -5557,7 +5557,7 @@ export type PostV1OrgsByOrgSlugStoreListingsByListingIdUnpublishData = {
 
 export type PostV1OrgsByOrgSlugStoreListingsByListingIdUnpublishErrors = {
   /**
-   * Caller lacks store:listing:moderate
+   * Caller is not a platform admin or lacks store:listing:moderate
    */
   403: ErrorResponseT
   /**
@@ -5585,6 +5585,77 @@ export type PostV1OrgsByOrgSlugStoreListingsByListingIdUnpublishResponses = {
 
 export type PostV1OrgsByOrgSlugStoreListingsByListingIdUnpublishResponse =
   PostV1OrgsByOrgSlugStoreListingsByListingIdUnpublishResponses[keyof PostV1OrgsByOrgSlugStoreListingsByListingIdUnpublishResponses]
+
+export type PostV1OrgsByOrgSlugStoreListingsByListingIdAcceptanceProjectsData = {
+  body?: {
+    name: string
+    slug?: string
+    region: string
+    ownerLogin: string
+    repositoryName: string
+    githubRepoId?: string
+    reason: string
+    templateInputs?: Array<{
+      key: string
+      value: string | number | boolean
+      secret: boolean
+    }>
+  }
+  path: {
+    orgSlug: string
+    listingId: string
+  }
+  query?: never
+  url: "/v1/orgs/{orgSlug}/store/listings/{listingId}/acceptance-projects"
+}
+
+export type PostV1OrgsByOrgSlugStoreListingsByListingIdAcceptanceProjectsErrors = {
+  /**
+   * Listing, region, slug, or template inputs are not eligible
+   */
+  400: ErrorResponseT
+  /**
+   * The organization is suspended for insufficient credit
+   */
+  402: ErrorResponseT
+  /**
+   * Caller is not an unimpersonated platform admin with project:create
+   */
+  403: ErrorResponseT
+  /**
+   * Organization or listing was not found
+   */
+  404: ErrorResponseT
+}
+
+export type PostV1OrgsByOrgSlugStoreListingsByListingIdAcceptanceProjectsError =
+  PostV1OrgsByOrgSlugStoreListingsByListingIdAcceptanceProjectsErrors[keyof PostV1OrgsByOrgSlugStoreListingsByListingIdAcceptanceProjectsErrors]
+
+export type PostV1OrgsByOrgSlugStoreListingsByListingIdAcceptanceProjectsResponses = {
+  /**
+   * The private acceptance project and immutable catalogue provenance
+   */
+  201: {
+    projectId: string
+    projectJobId: string
+    repositoryId: string
+    storeListingId: string
+    catalogueEntryId: string
+    catalogueImportId: string
+    sourceSha: string
+    pluginDigest: string
+    projectState: string
+    jobState: string
+    repository: {
+      ownerLogin: string
+      name: string
+      private: true
+    }
+  }
+}
+
+export type PostV1OrgsByOrgSlugStoreListingsByListingIdAcceptanceProjectsResponse =
+  PostV1OrgsByOrgSlugStoreListingsByListingIdAcceptanceProjectsResponses[keyof PostV1OrgsByOrgSlugStoreListingsByListingIdAcceptanceProjectsResponses]
 
 export type GetV1OrgsByOrgSlugBillingBalanceData = {
   body?: never
@@ -8004,6 +8075,47 @@ export type GetV1AndroidCatalogueResponses = {
    */
   200: unknown
 }
+
+export type PostAdminStoreListingsByListingIdAndroidReleaseData = {
+  body?: {
+    androidAppId: string | null
+  }
+  path: {
+    listingId: string
+  }
+  query?: never
+  url: "/admin/store/listings/{listingId}/android-release"
+}
+
+export type PostAdminStoreListingsByListingIdAndroidReleaseErrors = {
+  /**
+   * Listing or release is not publishable
+   */
+  400: ErrorResponseT
+  /**
+   * Caller is not a platform admin
+   */
+  403: ErrorResponseT
+  /**
+   * No such listing
+   */
+  404: ErrorResponseT
+}
+
+export type PostAdminStoreListingsByListingIdAndroidReleaseError =
+  PostAdminStoreListingsByListingIdAndroidReleaseErrors[keyof PostAdminStoreListingsByListingIdAndroidReleaseErrors]
+
+export type PostAdminStoreListingsByListingIdAndroidReleaseResponses = {
+  /**
+   * The canonical Android release, or null when removed
+   */
+  200: {
+    androidAppId: string | null
+  }
+}
+
+export type PostAdminStoreListingsByListingIdAndroidReleaseResponse =
+  PostAdminStoreListingsByListingIdAndroidReleaseResponses[keyof PostAdminStoreListingsByListingIdAndroidReleaseResponses]
 
 export type GetAdminUsersData = {
   body?: never

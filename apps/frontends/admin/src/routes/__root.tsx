@@ -56,6 +56,12 @@ function RootLayout() {
             Users
           </Link>
           <Link
+            to="/template-acceptance"
+            className="rounded-md px-3 py-2 text-sm text-sidebar-foreground hover:bg-sidebar-accent [&.active]:bg-sidebar-accent [&.active]:font-medium"
+          >
+            Template acceptance
+          </Link>
+          <Link
             to="/settings"
             className="rounded-md px-3 py-2 text-sm text-sidebar-foreground hover:bg-sidebar-accent [&.active]:bg-sidebar-accent [&.active]:font-medium"
           >
