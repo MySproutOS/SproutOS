@@ -321,6 +321,7 @@ resource "aws_autoscaling_group" "ecs" {
       min_healthy_percentage = 100
       max_healthy_percentage = 150
       instance_warmup        = 300
+      skip_matching          = true
     }
   }
 

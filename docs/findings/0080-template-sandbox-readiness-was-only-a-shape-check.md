@@ -26,7 +26,8 @@ the plugin ran.
 The Docker profile now admits the exact non-network Bubblewrap clone flags and its check is tied to
 the launcher's `--share-net` choice. The ASG references the concrete launch-template version instead
 of the literal `$Latest`; that makes every new host-boundary revision an ASG configuration change
-and triggers its rolling refresh, so a host-policy repair reaches running instances. Empty exit-1
-responses with stderr are surfaced as launcher failures. Signed template installs pass their exact
-manifest commit to snapshot-copy, and a regression advances the upstream branch before asserting
-that the target still contains the pinned tree.
+and triggers its rolling refresh, while matching instances are skipped. A host-policy repair
+therefore reaches old running instances without recycling hosts that already booted the target
+revision. Empty exit-1 responses with stderr are surfaced as launcher failures. Signed template
+installs pass their exact manifest commit to snapshot-copy, and a regression advances the upstream
+branch before asserting that the target still contains the pinned tree.
