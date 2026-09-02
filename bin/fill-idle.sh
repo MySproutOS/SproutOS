@@ -11,7 +11,7 @@ set -euo pipefail
 : "${NAME_PREFIX:?NAME_PREFIX is not set}"
 : "${LISTENER_ARN:?LISTENER_ARN is not set}"
 : "${SERVICES:?SERVICES is not set}"
-DESIRED="${DESIRED:-2}"
+DESIRED="${DESIRED:-1}"
 # Two minutes of boot plus the health check's own thresholds. An instance that has not answered by
 # then is not slow, it is broken.
 TIMEOUT_S="${TIMEOUT_S:-300}"

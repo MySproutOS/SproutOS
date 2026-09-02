@@ -83,6 +83,15 @@ pub struct CredentialStore {
 }
 
 impl CredentialStore {
+    /// Uses an existing control-plane pool.
+    ///
+    /// The combined router has several protocol listeners, but they are one process talking to one
+    /// database. Passing the same pool to every store prevents one idle connection per listener
+    /// from becoming the instance-count multiplier that exhausts the control plane.
+    pub fn from_pool(pool: Pool) -> Self {
+        Self { pool }
+    }
+
     /// Lists the live queue identities whose engine ACL users must exist.
     ///
     /// This deliberately derives identities from services rather than credentials: one service can
@@ -122,17 +131,7 @@ impl CredentialStore {
     /// purpose: a lookup happens once per *client connection*, not once per command, so even a busy
     /// proxy makes a handful of queries a second.
     pub fn connect(url: &str, size: usize) -> anyhow::Result<Self> {
-        let config: tokio_postgres::Config = normalise_url(url).parse()?;
-        let manager = Manager::from_config(
-            config,
-            tls_connector()?,
-            ManagerConfig {
-                recycling_method: RecyclingMethod::Fast,
-            },
-        );
-        Ok(Self {
-            pool: Pool::builder(manager).max_size(size).build()?,
-        })
+        Ok(Self::from_pool(control_plane_pool(url, size)?))
     }
 
     /// Authenticates one `AUTH <username> <secret>`.
@@ -366,6 +365,20 @@ impl CredentialStore {
         client.query_one("select 1", &[]).await?;
         Ok(())
     }
+}
+
+/// Builds the TLS control-plane pool shared by every database-backed component in one process.
+pub fn control_plane_pool(url: &str, size: usize) -> anyhow::Result<Pool> {
+    anyhow::ensure!(size > 0, "the control-plane database pool must be positive");
+    let config: tokio_postgres::Config = normalise_url(url).parse()?;
+    let manager = Manager::from_config(
+        config,
+        tls_connector()?,
+        ManagerConfig {
+            recycling_method: RecyclingMethod::Fast,
+        },
+    );
+    Ok(Pool::builder(manager).max_size(size).build()?)
 }
 
 /// Drop connection-string parameters `tokio-postgres` refuses but every other client ignores.

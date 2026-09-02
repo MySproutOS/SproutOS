@@ -123,6 +123,7 @@ JSON
     # The permanent ECS destination is already live, so --to green is an idempotent no-op.
     printf 'arn:sproutos-web-green\n'
     ;;
+  "autoscaling suspend-processes"|"autoscaling resume-processes") ;;
   *)
     echo "unexpected aws call: $*" >&2
     exit 98

@@ -607,6 +607,7 @@ jobs:
           bash bin/promote-cli-release.test.sh
           bash bin/clickhouse-database.test.sh
           bash bin/tenant-edge-autoscaling.test.sh
+          bash bin/router-shared-db-pool.test.sh
           bash bin/bootstrap-localstack.test.sh
           bash bin/android-signing-infra.test.sh
           bash bin/android-custody-delivery.test.sh

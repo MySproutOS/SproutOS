@@ -729,7 +729,7 @@ jobs:
           TENANT_HTTPS_TARGET_GROUP_SHORT: ${{ vars.TENANT_HTTPS_TARGET_GROUP_SHORT }}
           TENANT_HTTP_LISTENER_ARN: ${{ vars.TENANT_HTTP_LISTENER_ARN }}
           ECS_WEB_ENABLED: ${{ vars.ECS_WEB_ENABLED }}
-          DESIRED: ${{ vars.SERVICE_DESIRED_COUNT || '2' }}
+          DESIRED: ${{ vars.SERVICE_DESIRED_COUNT || '1' }}
 
   migrate:
     name: Apply migrations and seeds

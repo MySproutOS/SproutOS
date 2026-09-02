@@ -144,13 +144,13 @@ variable "service_instance_type" {
 variable "service_desired_count" {
   description = "Instances in the live colour of each service."
   type        = number
-  default     = 2
+  default     = 1
 }
 
 variable "tenant_edge_active_flows_per_target" {
   description = "Concurrent NLB TCP flows per healthy serving router before scaling out."
   type        = number
-  default     = 100
+  default     = 1000
 
   validation {
     condition     = var.tenant_edge_active_flows_per_target > 0
@@ -226,9 +226,9 @@ variable "tenant_edge_preview_colour" {
 }
 
 variable "service_max_count" {
-  description = "Ceiling per Auto Scaling group."
+  description = "Hard ceiling per Auto Scaling group. Blue and green are separate groups during a deployment."
   type        = number
-  default     = 6
+  default     = 2
 }
 
 variable "cache_node_type" {

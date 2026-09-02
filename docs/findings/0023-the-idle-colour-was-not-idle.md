@@ -19,6 +19,12 @@ active. NLB `ActiveFlowCount` stayed non-zero during connection draining while h
 to zero, so the alarm raised desired capacity from zero to three and then six. The idle colour was
 recreated before the deployment's final verifier could observe it empty.
 
+The policy threshold was also disconnected from the resource it was meant to protect. A controlled
+production measurement distributed 600 established idle TLS sessions across six `t4g.micro`
+routers. Aggregate router RSS increased by 22.5 KiB per connection; cgroup-accounted memory,
+including socket and runtime memory, increased by 25.4 KiB per connection. Scaling at 100 flows was
+therefore not a memory boundary. It let unauthenticated public TCP activity control instance count.
+
 ## Why the previous checks passed
 
 `fill-idle.sh` intentionally raises the idle colour to one before a deployment. `cutover.sh`
@@ -53,6 +59,12 @@ and resumes `AlarmNotification` only on the newly live colour. A retried no-op c
 those process states as well. Suspending this one process leaves boot, health replacement, and
 explicit desired-capacity changes available while preventing target-tracking alarms from reviving
 an idle fleet.
+
+Normal service capacity is one instance, the per-colour hard ceiling is two, and the tenant-edge
+scale-out target is 1,000 concurrent flows per healthy live router. One live and one staged instance
+are the ordinary deployment overlap. The live colour may add its second instance under sustained
+load; the idle colour cannot act on an alarm. The 2,048-connection application admission limit
+remains the final per-router boundary.
 
 The tests model both Auto Scaling groups and assert that the serving colour remains at one while
 the drained colour reaches zero. They also cover transient failures and the permanent-failure case

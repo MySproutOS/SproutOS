@@ -4,7 +4,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
-use deadpool_postgres::{Manager, ManagerConfig, Pool, RecyclingMethod};
+use deadpool_postgres::Pool;
 use redis::AsyncCommands;
 use redis::aio::ConnectionManager;
 
@@ -53,13 +53,7 @@ pub struct PostgresRoutes {
 }
 
 impl PostgresRoutes {
-    pub fn connect(
-        url: &str,
-        size: usize,
-        region: String,
-        account_id: String,
-    ) -> anyhow::Result<Self> {
-        anyhow::ensure!(size > 0, "ROUTER_ROUTE_DB_POOL must be positive");
+    pub fn from_pool(pool: Pool, region: String, account_id: String) -> anyhow::Result<Self> {
         anyhow::ensure!(
             !region.is_empty(),
             "AWS_REGION is required for route fallback"
@@ -68,20 +62,24 @@ impl PostgresRoutes {
             !account_id.is_empty(),
             "AWS_ACCOUNT_ID is required for route fallback"
         );
-        let config: tokio_postgres::Config =
-            sproutos_service_credentials::normalise_url(url).parse()?;
-        let manager = Manager::from_config(
-            config,
-            sproutos_service_credentials::tls_connector()?,
-            ManagerConfig {
-                recycling_method: RecyclingMethod::Fast,
-            },
-        );
         Ok(Self {
-            pool: Pool::builder(manager).max_size(size).build()?,
+            pool,
             region,
             account_id,
         })
+    }
+
+    pub fn connect(
+        url: &str,
+        size: usize,
+        region: String,
+        account_id: String,
+    ) -> anyhow::Result<Self> {
+        Self::from_pool(
+            sproutos_service_credentials::control_plane_pool(url, size)?,
+            region,
+            account_id,
+        )
     }
 
     /// Check the durable half at boot. A router without it would pass health checks and quietly
