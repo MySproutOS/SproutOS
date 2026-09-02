@@ -112,6 +112,7 @@ import {
   patchV1OrgsByOrgSlugRolesByRoleId,
   patchV1UserMePreferences,
   patchV1UserMeProfile,
+  postAdminStoreListingsByListingIdAndroidRelease,
   postAdminUsersImpersonate,
   postV1ApkSigningComplete,
   postV1ApkSigningFail,
@@ -171,6 +172,7 @@ import {
   postV1OrgsByOrgSlugServicesByServiceIdBranches,
   postV1OrgsByOrgSlugServicesByServiceIdBranchesByDatabaseBranchIdRotate,
   postV1OrgsByOrgSlugServicesByServiceIdRotate,
+  postV1OrgsByOrgSlugStoreListingsByListingIdAcceptanceProjects,
   postV1OrgsByOrgSlugStoreListingsByListingIdPublish,
   postV1OrgsByOrgSlugStoreListingsByListingIdUnpublish,
   postV1OrgsByOrgSlugTransferOwnership,
@@ -470,6 +472,9 @@ import type {
   PatchV1UserMeProfileData,
   PatchV1UserMeProfileError,
   PatchV1UserMeProfileResponse,
+  PostAdminStoreListingsByListingIdAndroidReleaseData,
+  PostAdminStoreListingsByListingIdAndroidReleaseError,
+  PostAdminStoreListingsByListingIdAndroidReleaseResponse,
   PostAdminUsersImpersonateData,
   PostAdminUsersImpersonateError,
   PostAdminUsersImpersonateResponse,
@@ -627,6 +632,9 @@ import type {
   PostV1OrgsByOrgSlugServicesData,
   PostV1OrgsByOrgSlugServicesError,
   PostV1OrgsByOrgSlugServicesResponse,
+  PostV1OrgsByOrgSlugStoreListingsByListingIdAcceptanceProjectsData,
+  PostV1OrgsByOrgSlugStoreListingsByListingIdAcceptanceProjectsError,
+  PostV1OrgsByOrgSlugStoreListingsByListingIdAcceptanceProjectsResponse,
   PostV1OrgsByOrgSlugStoreListingsByListingIdPublishData,
   PostV1OrgsByOrgSlugStoreListingsByListingIdPublishError,
   PostV1OrgsByOrgSlugStoreListingsByListingIdUnpublishData,
@@ -4154,6 +4162,33 @@ export const postV1OrgsByOrgSlugStoreListingsByListingIdUnpublishMutation = (
   return mutationOptions
 }
 
+/**
+ * Creates a private production-acceptance project from an exact blocked signed catalogue listing without publishing it
+ */
+export const postV1OrgsByOrgSlugStoreListingsByListingIdAcceptanceProjectsMutation = (
+  options?: Partial<Options<PostV1OrgsByOrgSlugStoreListingsByListingIdAcceptanceProjectsData>>,
+): UseMutationOptions<
+  PostV1OrgsByOrgSlugStoreListingsByListingIdAcceptanceProjectsResponse,
+  PostV1OrgsByOrgSlugStoreListingsByListingIdAcceptanceProjectsError,
+  Options<PostV1OrgsByOrgSlugStoreListingsByListingIdAcceptanceProjectsData>
+> => {
+  const mutationOptions: UseMutationOptions<
+    PostV1OrgsByOrgSlugStoreListingsByListingIdAcceptanceProjectsResponse,
+    PostV1OrgsByOrgSlugStoreListingsByListingIdAcceptanceProjectsError,
+    Options<PostV1OrgsByOrgSlugStoreListingsByListingIdAcceptanceProjectsData>
+  > = {
+    mutationFn: async (fnOptions) => {
+      const { data } = await postV1OrgsByOrgSlugStoreListingsByListingIdAcceptanceProjects({
+        ...options,
+        ...fnOptions,
+        throwOnError: true,
+      })
+      return data
+    },
+  }
+  return mutationOptions
+}
+
 export const getV1OrgsByOrgSlugBillingBalanceQueryKey = (
   options: Options<GetV1OrgsByOrgSlugBillingBalanceData>,
 ) => createQueryKey("getV1OrgsByOrgSlugBillingBalance", options)
@@ -5998,6 +6033,33 @@ export const getV1AndroidCatalogueOptions = (options?: Options<GetV1AndroidCatal
     },
     queryKey: getV1AndroidCatalogueQueryKey(options),
   })
+
+/**
+ * Selects the exact signed Android release published by a global listing
+ */
+export const postAdminStoreListingsByListingIdAndroidReleaseMutation = (
+  options?: Partial<Options<PostAdminStoreListingsByListingIdAndroidReleaseData>>,
+): UseMutationOptions<
+  PostAdminStoreListingsByListingIdAndroidReleaseResponse,
+  PostAdminStoreListingsByListingIdAndroidReleaseError,
+  Options<PostAdminStoreListingsByListingIdAndroidReleaseData>
+> => {
+  const mutationOptions: UseMutationOptions<
+    PostAdminStoreListingsByListingIdAndroidReleaseResponse,
+    PostAdminStoreListingsByListingIdAndroidReleaseError,
+    Options<PostAdminStoreListingsByListingIdAndroidReleaseData>
+  > = {
+    mutationFn: async (fnOptions) => {
+      const { data } = await postAdminStoreListingsByListingIdAndroidRelease({
+        ...options,
+        ...fnOptions,
+        throwOnError: true,
+      })
+      return data
+    },
+  }
+  return mutationOptions
+}
 
 export const getAdminUsersQueryKey = (options?: Options<GetAdminUsersData>) =>
   createQueryKey("getAdminUsers", options)

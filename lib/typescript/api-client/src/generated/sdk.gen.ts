@@ -377,6 +377,9 @@ import type {
   PatchV1UserMeProfileData,
   PatchV1UserMeProfileErrors,
   PatchV1UserMeProfileResponses,
+  PostAdminStoreListingsByListingIdAndroidReleaseData,
+  PostAdminStoreListingsByListingIdAndroidReleaseErrors,
+  PostAdminStoreListingsByListingIdAndroidReleaseResponses,
   PostAdminUsersImpersonateData,
   PostAdminUsersImpersonateErrors,
   PostAdminUsersImpersonateResponses,
@@ -549,6 +552,9 @@ import type {
   PostV1OrgsByOrgSlugServicesData,
   PostV1OrgsByOrgSlugServicesErrors,
   PostV1OrgsByOrgSlugServicesResponses,
+  PostV1OrgsByOrgSlugStoreListingsByListingIdAcceptanceProjectsData,
+  PostV1OrgsByOrgSlugStoreListingsByListingIdAcceptanceProjectsErrors,
+  PostV1OrgsByOrgSlugStoreListingsByListingIdAcceptanceProjectsResponses,
   PostV1OrgsByOrgSlugStoreListingsByListingIdPublishData,
   PostV1OrgsByOrgSlugStoreListingsByListingIdPublishErrors,
   PostV1OrgsByOrgSlugStoreListingsByListingIdUnpublishData,
@@ -2914,6 +2920,31 @@ export const postV1OrgsByOrgSlugStoreListingsByListingIdUnpublish = <
   })
 
 /**
+ * Creates a private production-acceptance project from an exact blocked signed catalogue listing without publishing it
+ */
+export const postV1OrgsByOrgSlugStoreListingsByListingIdAcceptanceProjects = <
+  ThrowOnError extends boolean = false,
+>(
+  options: Options<PostV1OrgsByOrgSlugStoreListingsByListingIdAcceptanceProjectsData, ThrowOnError>,
+): RequestResult<
+  PostV1OrgsByOrgSlugStoreListingsByListingIdAcceptanceProjectsResponses,
+  PostV1OrgsByOrgSlugStoreListingsByListingIdAcceptanceProjectsErrors,
+  ThrowOnError
+> =>
+  (options.client ?? client).post<
+    PostV1OrgsByOrgSlugStoreListingsByListingIdAcceptanceProjectsResponses,
+    PostV1OrgsByOrgSlugStoreListingsByListingIdAcceptanceProjectsErrors,
+    ThrowOnError
+  >({
+    url: "/v1/orgs/{orgSlug}/store/listings/{listingId}/acceptance-projects",
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options.headers,
+    },
+  })
+
+/**
  * Reads the organization's spendable credit balance
  */
 export const getV1OrgsByOrgSlugBillingBalance = <ThrowOnError extends boolean = false>(
@@ -4005,6 +4036,31 @@ export const getV1AndroidCatalogue = <ThrowOnError extends boolean = false>(
   (options?.client ?? client).get<GetV1AndroidCatalogueResponses, unknown, ThrowOnError>({
     url: "/v1/android/catalogue",
     ...options,
+  })
+
+/**
+ * Selects the exact signed Android release published by a global listing
+ */
+export const postAdminStoreListingsByListingIdAndroidRelease = <
+  ThrowOnError extends boolean = false,
+>(
+  options: Options<PostAdminStoreListingsByListingIdAndroidReleaseData, ThrowOnError>,
+): RequestResult<
+  PostAdminStoreListingsByListingIdAndroidReleaseResponses,
+  PostAdminStoreListingsByListingIdAndroidReleaseErrors,
+  ThrowOnError
+> =>
+  (options.client ?? client).post<
+    PostAdminStoreListingsByListingIdAndroidReleaseResponses,
+    PostAdminStoreListingsByListingIdAndroidReleaseErrors,
+    ThrowOnError
+  >({
+    url: "/admin/store/listings/{listingId}/android-release",
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options.headers,
+    },
   })
 
 /**
