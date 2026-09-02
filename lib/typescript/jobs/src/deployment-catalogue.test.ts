@@ -13,6 +13,7 @@ import type { DeploymentCatalogueArtifact } from "./deployment-catalogue-oci"
 import { enqueue } from "./queue"
 import {
   deploymentCatalogueSchemaInternals,
+  manifestDigestForCatalogueEntry,
   parseCatalogueAppManifest,
 } from "./deployment-catalogue-schema"
 
@@ -142,6 +143,15 @@ afterAll(async () => {
 })
 
 describe("signed manifest structural preflight", () => {
+  it("resolves a manifest digest from JSONB text returned by the catalogue import DAO", () => {
+    const manifestDigest = `sha256:${"6".repeat(64)}`
+    const provenance = JSON.stringify({
+      materials: [{ uri: `apps/${APP_ID}/manifest-source.json`, digest: manifestDigest }],
+    })
+
+    expect(manifestDigestForCatalogueEntry(provenance, APP_ID)).toBe(manifestDigest)
+  })
+
   it("rejects environment collisions before service provisioning", () => {
     const fixture = {
       ...app(),
