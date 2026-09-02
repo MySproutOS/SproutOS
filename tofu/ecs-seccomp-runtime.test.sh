@@ -7,6 +7,7 @@ image="sproutos-bwrap-seccomp-probe:$$"
 # The profile is host bootstrap state. Pin the ASG to the concrete revision so changing this file
 # cannot leave an updated `$Latest` behind old running instances without triggering the refresh.
 grep -F 'version = aws_launch_template.ecs.latest_version' "$script_dir/ecs.tf" >/dev/null
+grep -F 'skip_matching          = true' "$script_dir/ecs.tf" >/dev/null
 if grep -F "version = \"\$Latest\"" "$script_dir/ecs.tf" >/dev/null; then
   echo "ECS ASG must not use a moving \$Latest launch-template reference" >&2
   exit 1
