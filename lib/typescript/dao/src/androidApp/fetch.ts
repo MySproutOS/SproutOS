@@ -42,13 +42,18 @@ export function fetchAndroidApp(db: Kysely<DB>) {
       // Template provenance is intentionally not publication. Every customer fork retains
       // project.storeListingId; only the listing's explicit canonical release is anonymous.
       .innerJoin("storeListing", "storeListing.canonicalAndroidAppId", "androidApp.id")
+      .leftJoin("storeCategory", "storeCategory.id", "storeListing.categoryId")
       .innerJoin("androidSignerJob", (join) =>
         join
           .onRef("androidSignerJob.deploymentId", "=", "androidApp.latestGoodDeploymentId")
           .on("androidSignerJob.state", "=", "succeeded"),
       )
       .select(catalogueFields)
-      .select(["storeListing.name as label", "storeListing.descriptionMd as summary"])
+      .select([
+        "storeListing.name as label",
+        "storeListing.descriptionMd as summary",
+        "storeCategory.name as category",
+      ])
       .where("storeListing.platform", "=", "android")
       .where("storeListing.status", "=", "published")
       .where("storeListing.deletedAt", "is", null)
@@ -104,6 +109,7 @@ export function fetchAndroidApp(db: Kysely<DB>) {
       .select(catalogueFields)
       .select(["project.name as label"])
       .select((eb) => eb.val(null).$castTo<string | null>().as("summary"))
+      .select((eb) => eb.val(null).$castTo<string | null>().as("category"))
       .where("organizationMember.userId", "=", userId)
       .$if(organizationId !== null, (qb) =>
         qb.where("project.organizationId", "=", organizationId!),

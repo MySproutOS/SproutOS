@@ -112,6 +112,7 @@ const app: Hono = new Hono().get(
       packageName: string
       label: string
       summary?: string | null
+      category?: string | null
       versionName: string | null
       versionCode: number | null
       sha256: string | null
@@ -127,6 +128,7 @@ const app: Hono = new Hono().get(
           packageName: row.packageName,
           label: row.label,
           summary: row.summary ?? null,
+          category: row.category ?? null,
           versionName: row.versionName,
           versionCode: row.versionCode,
           sha256: row.sha256,

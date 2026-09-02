@@ -3,6 +3,7 @@ import { Link, type LinkProps } from "@tanstack/react-router"
 import { useCallback, useMemo } from "react"
 import {
   ChevronsUpDownIcon,
+  BookOpenIcon,
   DatabaseIcon,
   GlobeLockIcon,
   GlobeIcon,
@@ -41,6 +42,8 @@ import { ProjectSwitcher } from "@frontends/dashboard/components/shell/project-s
 
 type NavLinkProps = LinkProps & { icon: LucideIcon; label: string }
 
+type ExternalNavLinkProps = { href: string; icon: LucideIcon; label: string }
+
 function NavLink({ icon: Icon, label, ...linkProps }: NavLinkProps) {
   const { collapsed, setMobileOpen } = useSidebar()
   const closeMobile = useCallback(() => {
@@ -66,6 +69,40 @@ function NavLink({ icon: Icon, label, ...linkProps }: NavLinkProps) {
       </Link>
     ),
     [Icon, closeMobile, collapsed, label, linkProps],
+  )
+
+  if (!collapsed) {
+    return link
+  }
+
+  return (
+    <Tooltip>
+      <TooltipTrigger render={link} />
+      <TooltipContent side="right">{label}</TooltipContent>
+    </Tooltip>
+  )
+}
+
+function ExternalNavLink({ href, icon: Icon, label }: ExternalNavLinkProps) {
+  const { collapsed, setMobileOpen } = useSidebar()
+  const closeMobile = useCallback(() => {
+    setMobileOpen(false)
+  }, [setMobileOpen])
+
+  const link = (
+    <a
+      href={href}
+      target="_blank"
+      rel="noopener noreferrer"
+      onClick={closeMobile}
+      className={cn(
+        "flex h-8 items-center gap-[9px] rounded-md px-[9px] text-[13px] text-muted-foreground transition-colors hover:bg-secondary/60 hover:text-foreground",
+        collapsed && "justify-center px-0",
+      )}
+    >
+      <Icon className="size-[15px] shrink-0" aria-hidden="true" />
+      {collapsed ? <span className="sr-only">{label}</span> : label}
+    </a>
   )
 
   if (!collapsed) {
@@ -260,6 +297,7 @@ export function SidebarBody({ orgSlug }: { orgSlug: string }) {
           label="Custom domains"
         />
         <NavLink to="/store" icon={MergeIcon} label="Store" />
+        <ExternalNavLink href="https://sproutos.me/docs" icon={BookOpenIcon} label="Docs" />
 
         <div className={cn("mx-[9px] my-2.5 h-px bg-sidebar-border", collapsed && "mx-2")} />
 

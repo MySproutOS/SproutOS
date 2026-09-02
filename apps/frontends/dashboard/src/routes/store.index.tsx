@@ -7,8 +7,9 @@ import { ListError } from "@frontends/dashboard/components/list-states"
 import { PageBody, PageHeader } from "@frontends/dashboard/components/shell/page-header"
 import { useStoreCategories, useStoreListings } from "@frontends/dashboard/data/store"
 import { Badge } from "@ui/base/ui/badge"
+import { Button } from "@ui/base/ui/button"
 import { Input } from "@ui/base/ui/input"
-import { SearchIcon } from "lucide-react"
+import { DownloadIcon, SearchIcon, SmartphoneIcon } from "lucide-react"
 import { useState } from "react"
 
 export const Route = createFileRoute("/store/")({
@@ -39,6 +40,30 @@ function StoreList() {
         </div>
       </PageHeader>
       <PageBody>
+        <Card className="border-leaf/35 bg-leaf/5">
+          <CardContent className="flex flex-col gap-4 py-4 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex items-start gap-3">
+              <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-leaf/12 text-leaf">
+                <SmartphoneIcon className="size-4" aria-hidden="true" />
+              </span>
+              <div>
+                <p className="text-sm font-medium text-foreground">Take the store with you</p>
+                <p className="mt-0.5 max-w-xl text-xs leading-relaxed text-muted-foreground">
+                  Install SproutOS for Android to browse, install, and keep your apps up to date.
+                </p>
+              </div>
+            </div>
+            <Button
+              render={
+                <a href="/download" target="_blank" rel="noopener noreferrer">
+                  <DownloadIcon data-icon="inline-start" aria-hidden="true" />
+                  Get the Android app
+                </a>
+              }
+            />
+          </CardContent>
+        </Card>
+
         <p className="max-w-prose text-[13px] leading-relaxed text-muted-foreground">
           Every template here is public and already runs. Forking one copies it into your
           organization. Your deployed apps appear in your personal catalogue; store publication is a

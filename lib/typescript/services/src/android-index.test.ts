@@ -19,6 +19,7 @@ function row(overrides: Partial<AppRow> = {}): AppRow {
     packageName: "me.sproutos.example",
     label: "Example",
     summary: "An example",
+    category: null,
     versionName: "1.0.0",
     versionCode: 1,
     sha256: "a".repeat(64),
@@ -54,6 +55,11 @@ describe("an entry in the catalogue", () => {
 
     expect(entry?.downloadUrl).toBe("https://cdn.example/signed/p/d.apk?sig=abc")
     expect(entry?.sha256).toHaveLength(64)
+  })
+
+  it("carries a public store category without making it required for personal apps", () => {
+    expect(toApp(row({ category: "Productivity" }), signedUrlFor)?.category).toBe("Productivity")
+    expect(toApp(row({ category: null }), signedUrlFor)).not.toHaveProperty("category")
   })
 
   it("omits an app that has not been signed yet", () => {
