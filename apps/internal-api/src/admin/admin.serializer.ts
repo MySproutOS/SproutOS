@@ -1,6 +1,16 @@
 import { Type } from "typebox"
 import { Nullable, UUID7String } from "../utils/common.serializer"
 
+export const adminSchemaStoreListingParam = Type.Object({ listingId: UUID7String })
+
+export const adminSchemaAndroidReleaseRequest = Type.Object({
+  androidAppId: Nullable(UUID7String),
+})
+
+export const adminSchemaAndroidReleaseResponse = Type.Object({
+  androidAppId: Nullable(UUID7String),
+})
+
 export const adminSchemaUserListQuery = Type.Object({
   /** Matched against email and GitHub login. A support request arrives with one of those two. */
   q: Type.Optional(Type.String({ maxLength: 200 })),

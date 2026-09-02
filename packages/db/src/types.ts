@@ -1336,6 +1336,7 @@ export interface StoreCategory {
 }
 
 export interface StoreListing {
+  canonicalAndroidAppId: string | null
   capabilityReadiness: Generated<Json>
   capabilityVerifiedAt: Timestamp | null
   catalogueArchivedAt: Timestamp | null

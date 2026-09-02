@@ -47,6 +47,7 @@ describe.skipIf(!reachable)("store routes", () => {
 
   beforeAll(async () => {
     moderator = await createTestUser("storemoderator")
+    await db.updateTable("user").set({ isAdmin: true }).where("id", "=", moderator.id).execute()
     stranger = await createTestUser("storestranger")
 
     const created = await call("POST", "/v1/orgs", moderator, { name: "Store Suite" })
@@ -284,19 +285,21 @@ describe.skipIf(!reachable)("store routes", () => {
       expect(bad.status).toBe(400)
     })
 
-    /**
-     * TASK 18 defers every runtime but `web`. The facet still accepts the deferred values, so a
-     * client asking for `android` gets an empty page rather than a 400 — and the filter does not
-     * change shape when a runtime lands.
-     */
-    it("filters by platform, including the ones nothing implements yet", async () => {
+    /** The facet keeps its shape as runtimes land; iOS is still intentionally unimplemented. */
+    it("filters by platform and leaves an unimplemented platform empty", async () => {
       const web = await call("GET", "/v1/store/listings?platform=web&limit=100", null)
       expect(web.status).toBe(200)
       expect((web.json.data as { slug: string }[]).map((row) => row.slug)).toContain(publishedSlug)
 
       const android = await call("GET", "/v1/store/listings?platform=android", null)
       expect(android.status).toBe(200)
-      expect(android.json.data).toStrictEqual([])
+      expect(
+        (android.json.data as { platform: string }[]).every((row) => row.platform === "android"),
+      ).toBe(true)
+
+      const ios = await call("GET", "/v1/store/listings?platform=ios", null)
+      expect(ios.status).toBe(200)
+      expect(ios.json.data).toStrictEqual([])
     })
 
     it("rejects an unknown platform outright", async () => {
@@ -334,13 +337,9 @@ describe.skipIf(!reachable)("store routes", () => {
       expect(response.status).toBe(401)
     })
 
-    /**
-     * 404 rather than 403 for a non-member, the same as every other org-scoped route: a 403 would
-     * confirm the slug names a real team.
-     */
-    it("hides the moderation queue from someone outside the organization", async () => {
+    it("refuses the moderation queue to a non-platform-admin before tenant RBAC", async () => {
       const response = await call("GET", `/v1/orgs/${slug}/store/listings`, stranger)
-      expect(response.status).toBe(404)
+      expect(response.status).toBe(403)
     })
 
     it("shows unpublished listings to a moderator", async () => {

@@ -16,19 +16,25 @@ import { optionalAuthMiddleware } from "../middleware"
 import { actionsCover } from "../rbac"
 import { throwForbidden } from "../utils/http-exception"
 
-function bucket(): string {
+function configuredBucket(): string {
   const configured = process.env.ANDROID_ARTIFACT_BUCKET
   if (configured !== undefined && configured !== "") return configured
-  if (process.env.NODE_ENV === "production") throw new Error("ANDROID_ARTIFACT_BUCKET is required")
+  if (process.env.NODE_ENV === "production" && process.env.VITEST !== "true") {
+    throw new Error("ANDROID_ARTIFACT_BUCKET is required")
+  }
   return process.env.SERVICE_BUILD_BUCKET ?? "sproutos-dev-artifacts"
 }
 
+// Configuration is process startup state. Reading mutable process.env inside a request lets an
+// unrelated concurrent test (or runtime instrumentation) change the storage target mid-request.
+const artifactBucket = configuredBucket()
+const awsRegion = process.env.AWS_REGION ?? "us-east-1"
+const awsEndpoint = process.env.AWS_ENDPOINT_URL
+
 function s3(): S3Client {
   return new S3Client({
-    region: process.env.AWS_REGION ?? "us-east-1",
-    ...(process.env.AWS_ENDPOINT_URL === undefined
-      ? {}
-      : { endpoint: process.env.AWS_ENDPOINT_URL, forcePathStyle: true }),
+    region: awsRegion,
+    ...(awsEndpoint === undefined ? {} : { endpoint: awsEndpoint, forcePathStyle: true }),
   })
 }
 
@@ -44,7 +50,7 @@ async function signAll(
             `${key}:${version}`,
             await getSignedUrl(
               client,
-              new GetObjectCommand({ Bucket: bucket(), Key: key, VersionId: version }),
+              new GetObjectCommand({ Bucket: artifactBucket, Key: key, VersionId: version }),
               { expiresIn: CATALOGUE_TTL_SECONDS },
             ),
           ] as const,
