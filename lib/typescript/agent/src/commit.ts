@@ -62,6 +62,33 @@ export async function changedFiles(workspace: Workspace): Promise<string[]> {
 }
 
 /**
+ * Build a lease that remains meaningful when `git push` names a URL instead of a configured
+ * remote. Bare `--force-with-lease` only consults remote-tracking refs associated with the push
+ * destination. A raw authenticated URL has no such association, so Git treats an existing branch
+ * as unexpected and rejects even when the checkout was cloned from that exact head.
+ *
+ * An absent tracking ref deliberately means "the destination branch must not exist". That keeps
+ * first pushes safe and refuses to overwrite a branch the shallow, single-branch checkout never
+ * observed.
+ */
+export async function branchPushLease(workspace: Workspace, branch: string): Promise<string> {
+  let expected = ""
+  try {
+    const { stdout } = await run("git", [
+      "-C",
+      workspace.path,
+      "rev-parse",
+      "--verify",
+      `refs/remotes/origin/${branch}`,
+    ])
+    expected = stdout.trim()
+  } catch {
+    // No tracking ref: require the destination branch to be absent.
+  }
+  return `--force-with-lease=refs/heads/${branch}:${expected}`
+}
+
+/**
  * Stage everything, commit, and push the branch.
  *
  * Returns `no_changes` rather than throwing when the agent edited nothing. A turn that answered a
@@ -107,7 +134,14 @@ export async function commitAndPush(input: CommitInput): Promise<CommitResult> {
   */
   await run(
     "git",
-    ["-C", workspace.path, "push", url, `HEAD:refs/heads/${branch}`, "--force-with-lease"],
+    [
+      "-C",
+      workspace.path,
+      "push",
+      url,
+      `HEAD:refs/heads/${branch}`,
+      await branchPushLease(workspace, branch),
+    ],
     { env: gitAuthEnv(url, token) },
   )
 
