@@ -606,7 +606,15 @@ export function verifyPluginLock(
 
 /** Resolve the signed source-manifest digest recorded by the imported catalogue provenance. */
 export function manifestDigestForCatalogueEntry(provenance: unknown, entryId: string): string {
-  const row = object(provenance, "catalogue provenance")
+  let decoded = provenance
+  if (typeof provenance === "string") {
+    try {
+      decoded = JSON.parse(provenance) as unknown
+    } catch {
+      throw new Error("catalogue provenance is not valid JSON")
+    }
+  }
+  const row = object(decoded, "catalogue provenance")
   const materials = array(row.materials, "catalogue provenance.materials")
   const uri = `apps/${entryId}/manifest-source.json`
   for (const [index, value] of materials.entries()) {
