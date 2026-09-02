@@ -9,7 +9,7 @@ import store from "./store"
  * Mounted separately from `/v1` and not part of the public API: these routes answer to
  * `user.is_admin` rather than to any organization's RBAC, and nothing a customer's token can hold
  * reaches them. What `is_admin` grants is defined in `docs/adr/0019-platform-admin.md`, including
- * curation of the platform-owned global store catalogue.
+ * curation of the platform-owned global store catalogue and its private acceptance bridge.
  */
 const app = new Hono({
   router: new RegExpRouter(),
