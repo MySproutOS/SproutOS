@@ -10,6 +10,7 @@ import {
   forkRepository,
   generateFromTemplate,
   type GitHubClient,
+  GitHubApiError,
   GitHubCredentialError,
   GitHubNotFoundError,
   GitHubRateLimitError,
@@ -18,6 +19,7 @@ import {
   GitHubTransportError,
   GitHubValidationError,
   installationToken,
+  isRepositoryEmpty,
   listInstallationRepositories,
   listAllInstallationRepositories,
   MissingGitHubAppConfigError,
@@ -188,6 +190,40 @@ describe("repository operations", () => {
       { page: 2, per_page: 2 },
     ])
   })
+
+  it("distinguishes an empty repository from one with commits", async () => {
+    const installation = installationToken("ghs_x", 42, new Date(Date.now() + 3_600_000))
+    const empty = fakeClient({
+      "GET /repos/acme/empty/commits": () => {
+        throw new GitHubApiError(409, "/repos/acme/empty/commits", "Git Repository is empty.")
+      },
+    })
+    const populated = fakeClient({
+      "GET /repos/acme/populated/commits": () => [{ sha: "a".repeat(40) }],
+    })
+
+    await expect(isRepositoryEmpty(empty, installation, "acme", "empty")).resolves.toBe(true)
+    await expect(isRepositoryEmpty(populated, installation, "acme", "populated")).resolves.toBe(
+      false,
+    )
+  })
+
+  it("does not mistake an unrelated GitHub conflict for an empty repository", async () => {
+    const client = fakeClient({
+      "GET /repos/acme/conflicted/commits": () => {
+        throw new GitHubApiError(409, "/repos/acme/conflicted/commits", "Repository is locked")
+      },
+    })
+
+    await expect(
+      isRepositoryEmpty(
+        client,
+        installationToken("ghs_x", 42, new Date(Date.now() + 3_600_000)),
+        "acme",
+        "conflicted",
+      ),
+    ).rejects.toThrow("Repository is locked")
+  })
 })
 
 describe("app authentication", () => {
@@ -305,6 +341,23 @@ describe("app authentication", () => {
     store.clear(1)
     await store.get(1, scope)
     expect(client.calls).toHaveLength(3)
+  })
+
+  it("grants project repository HEAD checks the Contents permission GitHub requires for refs", async () => {
+    const client = fakeClient({
+      "POST /app/installations/42/access_tokens": () => ({
+        token: "ghs_head",
+        expires_at: new Date(Date.now() + 3_600_000).toISOString(),
+      }),
+    })
+    const store = createInstallationTokenStore({ client, signJwt: () => "j.w.t" })
+
+    await store.get(42, { purpose: "project-repository-read", repositoryId: REPO.id })
+
+    expect(client.calls[0].body).toStrictEqual({
+      repository_ids: [REPO.id],
+      permissions: { contents: "read" },
+    })
   })
 
   it("never reuses a token across repositories or purposes, or gives Daytona administration", async () => {

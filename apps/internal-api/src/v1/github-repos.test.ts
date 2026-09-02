@@ -65,6 +65,7 @@ describe("mergeInstallationRepositoryPages", () => {
       ownerType: "Organization" as const,
       private: false,
       fork: false,
+      archived: false,
       defaultBranch: "main",
       htmlUrl: "https://github.com/account/shared",
       cloneUrl: "https://github.com/account/shared.git",

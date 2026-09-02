@@ -48,8 +48,23 @@ fi
 # live service configuration from dropping below two healthy tasks before a replacement is ready.
 # With fixed host ports, ECS asks the managed capacity provider for the ASG's one spare instance;
 # 150% permits exactly one replacement task, so the two replicas roll sequentially.
-# The AWS services-stable waiter is bounded (40 attempts at 15 seconds), as is the rollback waiter.
+# A fixed-host-port rollout replaces the two replicas sequentially and includes target-group drain
+# time. The AWS CLI's built-in services-stable waiter stops after 40 attempts (about ten minutes),
+# which is shorter than a healthy worst-case rollout. Use an explicit, still-bounded poll so the
+# release and rollback have enough time and leave useful ECS state in the workflow log.
 DEPLOYMENT_CONFIGURATION="maximumPercent=150,minimumHealthyPercent=100,deploymentCircuitBreaker={enable=true,rollback=true}"
+ECS_STABILIZATION_ATTEMPTS="${ECS_STABILIZATION_ATTEMPTS:-80}"
+ECS_STABILIZATION_DELAY_SECONDS="${ECS_STABILIZATION_DELAY_SECONDS:-15}"
+if ! [[ "$ECS_STABILIZATION_ATTEMPTS" =~ ^[0-9]+$ ]] ||
+  [ "$ECS_STABILIZATION_ATTEMPTS" -lt 1 ] || [ "$ECS_STABILIZATION_ATTEMPTS" -gt 120 ]; then
+  echo "ECS_STABILIZATION_ATTEMPTS must be an integer from 1 through 120" >&2
+  exit 2
+fi
+if ! [[ "$ECS_STABILIZATION_DELAY_SECONDS" =~ ^[0-9]+$ ]] ||
+  [ "$ECS_STABILIZATION_DELAY_SECONDS" -gt 60 ]; then
+  echo "ECS_STABILIZATION_DELAY_SECONDS must be an integer from 0 through 60" >&2
+  exit 2
+fi
 PLACEMENT_STRATEGY=(
   "type=spread,field=attribute:ecs.availability-zone"
   "type=spread,field=instanceId"
@@ -223,6 +238,85 @@ if [ "$migration_exit" != "0" ]; then
   exit 1
 fi
 
+service_diagnostics() {
+  local label=$1
+  local attempt=$2
+  local state=$3
+  jq -c --arg label "$label" --argjson attempt "$attempt" '
+    .services[0] as $service
+    | {
+        label: $label,
+        attempt: $attempt,
+        serviceTaskDefinition: $service.taskDefinition,
+        desiredCount: $service.desiredCount,
+        runningCount: $service.runningCount,
+        pendingCount: $service.pendingCount,
+        deployments: [
+          $service.deployments[]?
+          | {
+              status,
+              taskDefinition,
+              desiredCount,
+              pendingCount,
+              runningCount,
+              rolloutState,
+              rolloutStateReason
+            }
+        ],
+        recentEvents: [$service.events[:5][]? | {createdAt, message}],
+        failures: (.failures // [])
+      }
+  ' <<<"$state" >&2
+}
+
+wait_for_service_stability() {
+  local label=$1
+  local attempt state signature previous_signature=""
+
+  for ((attempt = 1; attempt <= ECS_STABILIZATION_ATTEMPTS; attempt++)); do
+    if ! state=$(aws ecs describe-services --cluster "$CLUSTER" --services "$SERVICE" --output json); then
+      echo "$label stability check $attempt/$ECS_STABILIZATION_ATTEMPTS could not describe the service" >&2
+    else
+      signature=$(jq -c '
+        .services[0]
+        | {
+            taskDefinition,
+            desiredCount,
+            runningCount,
+            pendingCount,
+            deployments: [.deployments[]? | {status, taskDefinition, desiredCount, pendingCount, runningCount, rolloutState}]
+          }
+      ' <<<"$state")
+      if [ "$signature" != "$previous_signature" ] || [ "$attempt" = 1 ] ||
+        [ $((attempt % 16)) = 0 ]; then
+        service_diagnostics "$label" "$attempt" "$state"
+        previous_signature=$signature
+      fi
+
+      if jq -e --argjson desired "$DESIRED" '
+        (.failures // [] | length) == 0 and
+        (.services | length) == 1 and
+        .services[0].desiredCount == $desired and
+        .services[0].runningCount == $desired and
+        (.services[0].pendingCount // 0) == 0 and
+        (.services[0].deployments | length) == 1
+      ' <<<"$state" >/dev/null; then
+        return 0
+      fi
+    fi
+
+    if [ "$attempt" -lt "$ECS_STABILIZATION_ATTEMPTS" ]; then
+      sleep "$ECS_STABILIZATION_DELAY_SECONDS"
+    fi
+  done
+
+  echo "$label did not stabilize after $ECS_STABILIZATION_ATTEMPTS attempts at ${ECS_STABILIZATION_DELAY_SECONDS}s intervals" >&2
+  if [ -n "${state:-}" ]; then
+    service_diagnostics "$label-final" "$ECS_STABILIZATION_ATTEMPTS" "$state"
+  fi
+  return 1
+}
+
 rollback_service() {
   echo "rolling $CLUSTER/$SERVICE back to $current_task_arn" >&2
   aws ecs update-service \
@@ -236,8 +330,8 @@ rollback_service() {
     --placement-constraints "$PLACEMENT_CONSTRAINT" \
     --force-new-deployment >/dev/null
 
-  if ! aws ecs wait services-stable --cluster "$CLUSTER" --services "$SERVICE"; then
-    echo "rollback did not stabilize within the bounded ECS waiter" >&2
+  if ! wait_for_service_stability rollback; then
+    echo "rollback did not stabilize within the bounded ECS poll" >&2
     return 1
   fi
 
@@ -262,8 +356,8 @@ aws ecs update-service \
   --placement-strategy "${PLACEMENT_STRATEGY[@]}" \
   --placement-constraints "$PLACEMENT_CONSTRAINT" \
   --force-new-deployment >/dev/null
-if ! aws ecs wait services-stable --cluster "$CLUSTER" --services "$SERVICE"; then
-  echo "release did not stabilize within the bounded ECS waiter" >&2
+if ! wait_for_service_stability release; then
+  echo "release did not stabilize within the bounded ECS poll" >&2
   rollback_service || true
   exit 1
 fi

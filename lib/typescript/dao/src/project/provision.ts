@@ -20,6 +20,21 @@ import { crudProject } from "./crud"
 export type RepositoryPlan =
   | { mode: "existing"; id: string }
   | {
+      mode: "precreated"
+      githubRepoId: string
+      provenance: "copy"
+      ownerLogin: string
+      name: string
+      defaultBranch: string
+      private: true
+      isFork: false
+      upstreamStrategy: "snapshot_copy"
+      upstreamGithubRepoId: null
+      upstreamFullName: string
+      upstreamDefaultBranch: string
+      githubInstallationId: string
+    }
+  | {
       mode: "create"
       provenance: "fork" | "template" | "new" | "imported" | "copy"
       ownerLogin: string
@@ -88,6 +103,8 @@ export type ProvisionProjectInput = {
   regionId?: string | null
   idempotencyKey?: string | null
   audit?: AuditContext
+  auditAction?: string
+  auditMetadata?: Json
 }
 
 export type ProvisionedProject = {
@@ -133,6 +150,24 @@ async function resolveRepository(
 
     if (existing === undefined) throw new Error("repository not found in this organization")
     return existing
+  }
+
+  if (input.repository.mode === "precreated") {
+    return await crudRepository(tx).create({
+      organizationId: input.organizationId,
+      githubRepoId: input.repository.githubRepoId,
+      ownerLogin: input.repository.ownerLogin,
+      name: input.repository.name,
+      defaultBranch: input.repository.defaultBranch,
+      private: input.repository.private,
+      isFork: input.repository.isFork,
+      provenance: input.repository.provenance,
+      upstreamGithubRepoId: input.repository.upstreamGithubRepoId,
+      upstreamFullName: input.repository.upstreamFullName,
+      upstreamDefaultBranch: input.repository.upstreamDefaultBranch,
+      upstreamStrategy: input.repository.upstreamStrategy,
+      githubInstallationId: input.repository.githubInstallationId,
+    })
   }
 
   return await crudRepository(tx).createPending({
@@ -237,7 +272,7 @@ export function provisionProject(db: Kysely<DB>) {
       await crudAuditLog(tx).record({
         organizationId: input.organizationId,
         actorUserId: input.actorUserId,
-        action: "project:create",
+        action: input.auditAction ?? "project:create",
         resourceSrn: srnFor("project", input.organizationId, "project", project.id),
         before: null,
         after: {
@@ -249,6 +284,7 @@ export function provisionProject(db: Kysely<DB>) {
           autoUpdateEnabled: project.autoUpdateEnabled,
           autoUpdateCadence: project.autoUpdateCadence,
           jobId: job.id,
+          ...(input.auditMetadata === undefined ? {} : { operationMetadata: input.auditMetadata }),
         },
         ...input.audit,
       })

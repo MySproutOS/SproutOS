@@ -31,6 +31,7 @@ import services from "./services"
 import serviceDatabaseBranches from "./service-database-branches"
 import store, { storeModeration } from "./store"
 import templates from "./templates"
+import templateAcceptance from "./template-acceptance"
 import apiKeys from "./api-keys"
 import observability from "./observability"
 import otlp from "./otlp"
@@ -79,6 +80,7 @@ orgs.route("/", workflows)
 // so the organization whose grants apply is named in the path rather than inferred from
 // `user_preference.last_org_id`.
 orgs.route("/", storeModeration)
+orgs.route("/", templateAcceptance)
 orgs.route("/:orgSlug/billing", billing)
 orgs.route("/", observability)
 orgs.route("/", apiKeys)
