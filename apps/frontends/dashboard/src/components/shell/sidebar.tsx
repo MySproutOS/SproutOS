@@ -15,6 +15,7 @@ import {
 import { Avatar, AvatarFallback } from "@ui/base/ui/avatar"
 import { Money } from "@ui/base/ui/money"
 import { Progress } from "@ui/base/ui/progress"
+import { ScrollArea } from "@ui/base/ui/scroll-area"
 import { Skeleton } from "@ui/base/ui/skeleton"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@ui/base/ui/tooltip"
 import {
@@ -268,21 +269,25 @@ export function Sidebar({ orgSlug }: { orgSlug: string }) {
     <aside
       data-collapsed={collapsed}
       className={cn(
-        "hidden shrink-0 flex-col border-r border-sidebar-border bg-sidebar transition-[width] duration-200 md:flex",
+        "sticky top-0 hidden h-dvh shrink-0 self-start flex-col border-r border-sidebar-border bg-sidebar transition-[width] duration-200 md:flex",
         collapsed ? "w-14" : "w-58",
       )}
     >
-      <SidebarBody orgSlug={orgSlug} />
-      <button
-        type="button"
-        onClick={toggleCollapsed}
-        aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
-        aria-pressed={collapsed}
-        className="m-2 mt-0 flex h-7 items-center justify-center gap-2 rounded-md text-muted-foreground transition-colors hover:bg-secondary/60 hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/20"
-      >
-        <PanelLeftIcon className="size-4 shrink-0" />
-        {!collapsed && <span className="text-[11px]">Collapse</span>}
-      </button>
+      <ScrollArea className="min-h-0 flex-1">
+        <div className="flex min-h-dvh flex-col">
+          <SidebarBody orgSlug={orgSlug} />
+          <button
+            type="button"
+            onClick={toggleCollapsed}
+            aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+            aria-pressed={collapsed}
+            className="m-2 mt-0 flex h-7 items-center justify-center gap-2 rounded-md text-muted-foreground transition-colors hover:bg-secondary/60 hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/20"
+          >
+            <PanelLeftIcon className="size-4 shrink-0" />
+            {!collapsed && <span className="text-[11px]">Collapse</span>}
+          </button>
+        </div>
+      </ScrollArea>
     </aside>
   )
 }
