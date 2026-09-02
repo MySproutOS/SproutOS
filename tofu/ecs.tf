@@ -298,8 +298,11 @@ resource "aws_autoscaling_group" "ecs" {
   metrics_granularity = "1Minute"
 
   launch_template {
-    id      = aws_launch_template.ecs.id
-    version = "$Latest"
+    id = aws_launch_template.ecs.id
+    # Use the concrete revision so a new launch-template version is also an ASG configuration
+    # change. A literal `$Latest` keeps the ASG field unchanged and the provider therefore has no
+    # change with which to trigger the instance_refresh block below.
+    version = aws_launch_template.ecs.latest_version
   }
 
   # ECS manages this through the capacity provider; OpenTofu setting it too would fight the
@@ -311,7 +314,7 @@ resource "aws_autoscaling_group" "ecs" {
   # A launch-template revision changes the host boundary itself: AMI, bootstrap, Docker policy or
   # the template-plugin seccomp allowlist. Keep both serving hosts healthy while the reserved third
   # slot comes up, then replace the old hosts one at a time so a corrected boundary actually reaches
-  # production instead of existing only in `$Latest`.
+  # production instead of existing only as the launch template's latest revision.
   instance_refresh {
     strategy = "Rolling"
     preferences {
