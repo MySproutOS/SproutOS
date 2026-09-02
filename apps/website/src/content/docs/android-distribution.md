@@ -119,6 +119,25 @@ Download URLs are short-lived bearer URLs. Authorization is checked when SproutO
 that was already issued remains usable until its one-hour expiry. For an urgent artifact revocation,
 contact SproutOS operations instead of relying only on unpublishing the listing.
 
+## Control automatic updates
+
+The Android client has separate switches for updating SproutOS itself and updating apps already
+installed through SproutOS. Both are enabled initially and can be turned off independently. The
+client checks at most once a day through Android WorkManager, only on an unmetered network and while
+the battery and storage are not low. Android may defer that work further.
+
+Automatic work is update-only. It never installs a new catalogue app, downgrades an installed app,
+or replaces an app whose package name or signing certificate differs from the verified release.
+The client still downloads the exact higher version and verifies its published byte size, SHA-256,
+package name, version, and signing certificate before asking Android to install it.
+
+On supported Android versions, the client asks PackageInstaller to update without another prompt
+only for SproutOS itself or an app for which SproutOS is the recorded installer or update owner.
+Android makes the final decision: device policy, OS version, target SDK, permissions, or installer
+ownership can still require confirmation. When that happens, SproutOS posts an actionable
+notification and keeps a message for the next app launch. Do not describe this as guaranteed silent
+or unattended updating on every device.
+
 ## Test installation and updating
 
 Test the public user journey on a supported Android device or emulator before announcing a release:

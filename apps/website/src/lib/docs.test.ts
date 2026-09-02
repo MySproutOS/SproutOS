@@ -86,14 +86,20 @@ describe("the documentation", () => {
     expect(text).not.toContain("sproutos-apps")
   })
 
-  it("documents required-region project creation and direct Android distribution", () => {
+  it("documents the current CLI contract and direct Android distribution", () => {
     const cli = searchableText(docBySlug("cli")!)
     const android = searchableText(docBySlug("android-distribution")!)
 
     expect(cli).toContain("sprout region list")
     expect(cli).toContain("--region us-east-1")
+    expect(cli).toContain("sprout 0.2.1")
     expect(cli).toContain("template-input-file")
     expect(cli).toContain("preserves the source or signed app store listing defaults")
+    expect(cli).toContain("sprout service list")
+    expect(cli).toContain("sprout deployment list my-site")
+    expect(cli).not.toContain("sprout service list --project")
+    expect(cli).not.toContain("sprout deployment list --project")
+    expect(cli).toContain("sprout --json --yes project delete my-site")
     expect(android).toContain("does not publish google play tracks")
     expect(android).toContain("raw unsigned apk")
     expect(android).toContain("mobile mcp")
