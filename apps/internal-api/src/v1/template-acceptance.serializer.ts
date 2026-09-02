@@ -22,6 +22,7 @@ export const templateAcceptanceSchemaRequest = Type.Object({
   region: Type.String({ minLength: 1, maxLength: 64 }),
   ownerLogin: Type.String({ minLength: 1, maxLength: 39 }),
   repositoryName: Type.String({ minLength: 1, maxLength: 100 }),
+  githubRepoId: Type.Optional(Type.String({ pattern: "^[1-9][0-9]{0,19}$" })),
   reason: Type.String({ minLength: 10, maxLength: 500 }),
   templateInputs: Type.Optional(Type.Array(TemplateInput, { maxItems: 64 })),
 })

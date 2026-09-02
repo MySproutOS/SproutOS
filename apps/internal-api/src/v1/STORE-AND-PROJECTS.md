@@ -90,6 +90,15 @@ evidence. Completion still does not publish the listing. Production results belo
 Deployment-Templates manifest; catalogue reconciliation is the only path that may turn the draft
 into a public listing.
 
+When the destination GitHub App installation uses selected repositories, precreate the empty
+private repository, add only that repository to the installation, and pass its numeric GitHub id as
+`githubRepoId` alongside the exact `ownerLogin` and `repositoryName`. Before writing a repository,
+project, job, or template-install row, the route mints an exact repository-scoped installation
+credential and asks GitHub to prove the id/name/owner identity, private and unarchived ordinary-repo
+policy, and empty commit history. The imported repository and project are then committed in one
+database transaction. This path does not broaden the installation to every repository and never
+falls back to a user's OAuth credential.
+
 Every `fetch*` takes the organization id alongside the resource id — `getInOrganization`, never
 `getOne`. `requirePermission` authorizes an action against an SRN it builds from the resolved
 organization plus a path parameter it does not verify, so a project id belonging to another

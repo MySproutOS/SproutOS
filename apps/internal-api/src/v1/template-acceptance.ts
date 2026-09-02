@@ -19,11 +19,20 @@ import {
   fetchCreditRetentionState,
   fetchDeploymentCatalogueImport,
   fetchGithubInstallation,
+  fetchRepository,
   fetchRegion,
   fetchStoreListing,
   isValidProjectSlug,
   provisionProject,
+  type RepositoryPlan,
 } from "@lib/dao"
+import {
+  createGitHubClient,
+  getRepositoryById,
+  GitHubNotFoundError,
+  isRepositoryEmpty,
+  organizationGitHubCredential,
+} from "@lib/github"
 import { db } from "@sproutos/db"
 import { v7 } from "uuid"
 import { Hono } from "hono"
@@ -42,6 +51,7 @@ import {
   templateAcceptanceSchemaRequest,
   templateAcceptanceSchemaResponse,
 } from "./template-acceptance.serializer"
+import { acceptanceRepositoryProblem } from "./template-acceptance-repository"
 
 const errorResponse = {
   content: { "application/json": { schema: resolver(ErrorSchemaResponse) } },
@@ -234,6 +244,134 @@ const app = new Hono().use(authMiddleware).post(
       )
     }
 
+    let repositoryPlan: RepositoryPlan
+    let precreatedRepository: { id: number; fullName: string; installationId: string } | undefined
+    if (json.githubRepoId !== undefined) {
+      const githubRepoId = Number(json.githubRepoId)
+      if (!Number.isSafeInteger(githubRepoId) || githubRepoId <= 0) {
+        return throwBadRequest(c, "GitHub repository id is invalid", ErrorCode.ValidationFailed, {
+          target: "githubRepoId",
+        })
+      }
+
+      const credential = await organizationGitHubCredential(
+        db,
+        organization.id,
+        { purpose: "repository-snapshot-push", repositoryId: githubRepoId },
+        json.ownerLogin,
+      )
+      if (credential === undefined || credential.kind !== "installation") {
+        return throwBadRequest(
+          c,
+          "The named repository is not accessible to this organization's GitHub App installation",
+          ErrorCode.ValidationFailed,
+          { target: "githubRepoId" },
+        )
+      }
+
+      const github = createGitHubClient()
+      let inspected
+      try {
+        inspected = await getRepositoryById(github, credential, json.githubRepoId)
+      } catch (error) {
+        if (error instanceof GitHubNotFoundError) {
+          return throwBadRequest(
+            c,
+            "The named repository is not accessible to this organization's GitHub App installation",
+            ErrorCode.ValidationFailed,
+            { target: "githubRepoId" },
+          )
+        }
+        throw error
+      }
+      const repositoryProblem = acceptanceRepositoryProblem(inspected, {
+        githubRepoId,
+        ownerLogin: json.ownerLogin,
+        repositoryName: json.repositoryName,
+      })
+      if (repositoryProblem !== undefined) {
+        return throwBadRequest(c, repositoryProblem, ErrorCode.ValidationFailed, {
+          target: "githubRepoId",
+        })
+      }
+      if (!(await isRepositoryEmpty(github, credential, inspected.ownerLogin, inspected.name))) {
+        return throwBadRequest(
+          c,
+          "Production acceptance requires an empty repository",
+          ErrorCode.ValidationFailed,
+          { target: "githubRepoId" },
+        )
+      }
+
+      const installationRow = await fetchGithubInstallation(db).getByInstallationId(
+        organization.id,
+        String(credential.installationId),
+        ["id"],
+      )
+      if (installationRow === undefined) {
+        return throwBadRequest(
+          c,
+          "The repository's GitHub App installation is not linked to this organization",
+          ErrorCode.ValidationFailed,
+          { target: "githubRepoId" },
+        )
+      }
+      const known = await fetchRepository(db).getByGithubRepoId(
+        organization.id,
+        json.githubRepoId,
+        ["id"],
+      )
+      if (known !== undefined) {
+        return throwBadRequest(
+          c,
+          "The repository is already registered to this organization",
+          ErrorCode.ValidationFailed,
+          { target: "githubRepoId" },
+        )
+      }
+      repositoryPlan = {
+        mode: "precreated",
+        githubRepoId: json.githubRepoId,
+        githubInstallationId: installationRow.id,
+        ownerLogin: inspected.ownerLogin,
+        name: inspected.name,
+        defaultBranch: listing.defaultBranch,
+        private: true,
+        isFork: false,
+        provenance: "copy",
+        upstreamGithubRepoId: null,
+        upstreamFullName: `${listing.upstreamOwner}/${listing.upstreamRepo}`,
+        upstreamDefaultBranch: listing.defaultBranch,
+        upstreamStrategy: "snapshot_copy",
+      }
+      precreatedRepository = {
+        id: inspected.id,
+        fullName: inspected.fullName,
+        installationId: installationRow.id,
+      }
+    } else {
+      const installations = await fetchGithubInstallation(db).listUsable(organization.id, [
+        "id",
+        "accountLogin",
+      ])
+      const matchingInstallation = installations.find(
+        (candidate) => candidate.accountLogin.toLowerCase() === json.ownerLogin.toLowerCase(),
+      )
+      repositoryPlan = {
+        mode: "create",
+        provenance: "copy",
+        ownerLogin: json.ownerLogin,
+        name: json.repositoryName,
+        defaultBranch: listing.defaultBranch,
+        private: true,
+        isFork: false,
+        upstreamStrategy: "snapshot_copy",
+        upstreamFullName: `${listing.upstreamOwner}/${listing.upstreamRepo}`,
+        upstreamDefaultBranch: listing.defaultBranch,
+        githubInstallationId: matchingInstallation?.id ?? null,
+      }
+    }
+
     const projectId = v7()
     const environmentInputs = await Promise.all(
       resolvedInputs.map(async (input) => ({
@@ -241,13 +379,6 @@ const app = new Hono().use(authMiddleware).post(
         secret: input.secret,
         value: await sealEnvVarValue(projectId, input.environment, input.value),
       })),
-    )
-    const installation = await fetchGithubInstallation(db).listUsable(organization.id, [
-      "id",
-      "accountLogin",
-    ])
-    const matchingInstallation = installation.find(
-      (candidate) => candidate.accountLogin.toLowerCase() === json.ownerLogin.toLowerCase(),
     )
     const slug = await allocateProjectSlug(db, organization.id, json.slug ?? json.name)
     const provisioned = await provisionProject(db).create({
@@ -285,19 +416,7 @@ const app = new Hono().use(authMiddleware).post(
         })),
         environmentInputs,
       },
-      repository: {
-        mode: "create",
-        provenance: "copy",
-        ownerLogin: json.ownerLogin,
-        name: json.repositoryName,
-        defaultBranch: listing.defaultBranch,
-        private: true,
-        isFork: false,
-        upstreamStrategy: "snapshot_copy",
-        upstreamFullName: `${listing.upstreamOwner}/${listing.upstreamRepo}`,
-        upstreamDefaultBranch: listing.defaultBranch,
-        githubInstallationId: matchingInstallation?.id ?? null,
-      },
+      repository: repositoryPlan,
       jobKind: "provision",
       regionId: selectedRegion.id,
       audit: auditContext(c),
@@ -309,6 +428,14 @@ const app = new Hono().use(authMiddleware).post(
         sourceSha: catalogueImport.sourceSha,
         pluginDigest: listing.templatePluginDigest,
         repositoryPrivate: true,
+        precreatedRepository:
+          precreatedRepository === undefined
+            ? null
+            : {
+                githubRepoId: String(precreatedRepository.id),
+                fullName: precreatedRepository.fullName,
+                githubInstallationId: precreatedRepository.installationId,
+              },
       },
     })
 
@@ -318,20 +445,22 @@ const app = new Hono().use(authMiddleware).post(
       payload: { projectJobId: provisioned.job.id, userId: user.id },
       maxAttempts: 3,
     })
-    await enqueue(db, {
-      kind: GITHUB_EVENT_KINDS.installationDiscover,
-      idempotencyKey: installationDiscoveryIdempotencyKey({
-        login: json.ownerLogin,
-        appId: process.env.GITHUB_APP_ID,
-        operationId: provisioned.project.id,
-        organizationId: organization.id,
-      }),
-      payload: {
-        organizationId: organization.id,
-        login: json.ownerLogin,
-      },
-      maxAttempts: 3,
-    })
+    if (precreatedRepository === undefined) {
+      await enqueue(db, {
+        kind: GITHUB_EVENT_KINDS.installationDiscover,
+        idempotencyKey: installationDiscoveryIdempotencyKey({
+          login: json.ownerLogin,
+          appId: process.env.GITHUB_APP_ID,
+          operationId: provisioned.project.id,
+          organizationId: organization.id,
+        }),
+        payload: {
+          organizationId: organization.id,
+          login: json.ownerLogin,
+        },
+        maxAttempts: 3,
+      })
+    }
 
     return c.json(
       {
