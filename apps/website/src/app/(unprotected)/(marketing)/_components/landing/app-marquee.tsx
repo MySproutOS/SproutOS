@@ -12,6 +12,16 @@ export type MarqueeListing = {
   licenseSpdx: string | null
 }
 
+const MINIMUM_ITEMS_PER_MARQUEE_COPY = 12
+
+export function buildMarqueeSequence(listings: MarqueeListing[]) {
+  const repetitions = Math.max(1, Math.ceil(MINIMUM_ITEMS_PER_MARQUEE_COPY / listings.length))
+
+  return Array.from({ length: repetitions }, (_, repetition) =>
+    listings.map((listing) => ({ listing, repetition })),
+  ).flat()
+}
+
 /**
  * The catalogue, moving.
  *
@@ -19,9 +29,10 @@ export type MarqueeListing = {
  * on, and motion is what says *there are more of these* without spending a section's worth of
  * height saying it.
  *
- * The list is rendered twice. The animation translates the track by exactly -50%, so at the moment
- * it resets, the second copy is sitting precisely where the first began and the seam is invisible.
- * Any other duplication count, or any percentage other than half, produces a visible jump.
+ * The sequence is rendered twice. Short catalogues repeat within each sequence so one copy remains
+ * wider than the viewport; otherwise both real cards can leave before the duplicate reaches the
+ * screen. The animation translates the track by exactly -50%, so at the moment it resets, the
+ * second copy is sitting precisely where the first began and the seam is invisible.
  *
  * `animation` is dropped entirely under `prefers-reduced-motion` — see `utilities.css`, where the
  * same block already flattens the scroll reveals. A marquee is the most literal case of the thing
@@ -29,6 +40,8 @@ export type MarqueeListing = {
  */
 export function AppMarquee({ listings }: { listings: MarqueeListing[] }) {
   if (listings.length === 0) return null
+
+  const sequence = buildMarqueeSequence(listings)
 
   return (
     <section className="border-t rule-soft py-20 sm:py-28">
@@ -42,34 +55,39 @@ export function AppMarquee({ listings }: { listings: MarqueeListing[] }) {
       <div className="marquee mt-10">
         <div className="marquee-track">
           {[0, 1].map((copy) => (
-            <ul key={copy} className="flex gap-5" aria-hidden={copy === 1}>
-              {listings.map((listing) => (
-                <li
-                  key={`${copy}-${listing.id}`}
-                  className="relative w-[19rem] shrink-0 rounded-2xl border rule-soft bg-card/60 p-6 transition-colors hover:border-primary/40"
-                >
-                  <h3 className="font-display text-[1.0625rem] font-semibold tracking-tight">
-                    {copy === 0 ? (
-                      <Link
-                        href={`/store/${listing.slug}`}
-                        className="before:absolute before:inset-0"
-                      >
-                        {listing.name}
-                      </Link>
-                    ) : (
-                      listing.name
-                    )}
-                  </h3>
-                  <p className="mt-2 text-sm text-muted-foreground text-pretty">
-                    {listing.tagline}
-                  </p>
-                  <p className="mt-4 font-mono text-xs text-muted-foreground">
-                    {listing.upstreamOwner}/{listing.upstreamRepo}
-                    {/* Nullable in the schema — a missing licence must not print a bare separator. */}
-                    {listing.licenseSpdx === null ? null : ` · ${listing.licenseSpdx}`}
-                  </p>
-                </li>
-              ))}
+            <ul key={copy} className="flex gap-5 pr-5" aria-hidden={copy === 1}>
+              {sequence.map(({ listing, repetition }) => {
+                const isAccessible = copy === 0 && repetition === 0
+
+                return (
+                  <li
+                    key={`${copy}-${repetition}-${listing.id}`}
+                    aria-hidden={!isAccessible}
+                    className="relative w-[19rem] shrink-0 rounded-2xl border rule-soft bg-card/60 p-6 transition-colors hover:border-primary/40"
+                  >
+                    <h3 className="font-display text-[1.0625rem] font-semibold tracking-tight">
+                      {isAccessible ? (
+                        <Link
+                          href={`/store/${listing.slug}`}
+                          className="before:absolute before:inset-0"
+                        >
+                          {listing.name}
+                        </Link>
+                      ) : (
+                        listing.name
+                      )}
+                    </h3>
+                    <p className="mt-2 text-sm text-muted-foreground text-pretty">
+                      {listing.tagline}
+                    </p>
+                    <p className="mt-4 font-mono text-xs text-muted-foreground">
+                      {listing.upstreamOwner}/{listing.upstreamRepo}
+                      {/* Nullable in the schema — a missing licence must not print a bare separator. */}
+                      {listing.licenseSpdx === null ? null : ` · ${listing.licenseSpdx}`}
+                    </p>
+                  </li>
+                )
+              })}
             </ul>
           ))}
         </div>

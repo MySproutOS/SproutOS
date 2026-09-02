@@ -119,10 +119,10 @@
 /*
   A continuously scrolling rail.
 
-  The track holds the list twice and translates by exactly -50%, so the reset lands the second copy
-  where the first started. `width: max-content` keeps the children at their natural size instead of
-  being squeezed to fit the viewport, which is what makes the overflow — and therefore the motion —
-  exist at all.
+  The track holds the sequence twice and translates by exactly -50%, so the reset lands the second
+  copy where the first started. Each sequence owns its trailing gap; keeping the track itself
+  gapless makes half its width exactly one sequence. `width: max-content` keeps the children at
+  their natural size instead of being squeezed to fit the viewport.
 */
 @utility marquee {
   overflow: hidden;
@@ -136,7 +136,6 @@
 
 @utility marquee-track {
   display: flex;
-  gap: 1.25rem;
   width: max-content;
   animation: marquee 46s linear infinite;
 }

@@ -5,11 +5,13 @@ import {
   ChevronsUpDownIcon,
   BookOpenIcon,
   DatabaseIcon,
+  ExternalLinkIcon,
   GlobeLockIcon,
   GlobeIcon,
   LayoutDashboardIcon,
   MergeIcon,
   PanelLeftIcon,
+  ScaleIcon,
   SettingsIcon,
   WorkflowIcon,
   type LucideIcon,
@@ -44,6 +46,16 @@ type NavLinkProps = LinkProps & { icon: LucideIcon; label: string }
 
 type ExternalNavLinkProps = { href: string; icon: LucideIcon; label: string }
 
+const navLinkClassName = (collapsed: boolean) =>
+  cn(
+    // Active styling rides `data-[status=active]` rather than `activeProps`.
+    // Router appends the active classes to the end of the attribute, but CSS
+    // order decides the winner — plain `text-foreground` loses to the base
+    // `text-muted-foreground`, and the highlight silently never appears.
+    "flex h-8 items-center gap-[9px] rounded-md px-[9px] text-[13px] text-muted-foreground transition-colors hover:bg-secondary/60 hover:text-foreground data-[status=active]:bg-secondary data-[status=active]:font-medium data-[status=active]:text-foreground [&[data-status=active]_svg]:text-leaf",
+    collapsed && "justify-center px-0",
+  )
+
 function NavLink({ icon: Icon, label, ...linkProps }: NavLinkProps) {
   const { collapsed, setMobileOpen } = useSidebar()
   const closeMobile = useCallback(() => {
@@ -52,18 +64,7 @@ function NavLink({ icon: Icon, label, ...linkProps }: NavLinkProps) {
 
   const link = useMemo(
     () => (
-      <Link
-        {...linkProps}
-        onClick={closeMobile}
-        className={cn(
-          // Active styling rides `data-[status=active]` rather than `activeProps`.
-          // Router appends the active classes to the end of the attribute, but CSS
-          // order decides the winner — plain `text-foreground` loses to the base
-          // `text-muted-foreground`, and the highlight silently never appears.
-          "flex h-8 items-center gap-[9px] rounded-md px-[9px] text-[13px] text-muted-foreground transition-colors hover:bg-secondary/60 hover:text-foreground data-[status=active]:bg-secondary data-[status=active]:font-medium data-[status=active]:text-foreground [&[data-status=active]_svg]:text-leaf",
-          collapsed && "justify-center px-0",
-        )}
-      >
+      <Link {...linkProps} onClick={closeMobile} className={navLinkClassName(collapsed)}>
         <Icon className="size-[15px] shrink-0" aria-hidden="true" />
         {collapsed ? <span className="sr-only">{label}</span> : label}
       </Link>
@@ -88,26 +89,30 @@ function ExternalNavLink({ href, icon: Icon, label }: ExternalNavLinkProps) {
   const closeMobile = useCallback(() => {
     setMobileOpen(false)
   }, [setMobileOpen])
-
-  const link = (
-    <a
-      href={href}
-      target="_blank"
-      rel="noopener noreferrer"
-      onClick={closeMobile}
-      className={cn(
-        "flex h-8 items-center gap-[9px] rounded-md px-[9px] text-[13px] text-muted-foreground transition-colors hover:bg-secondary/60 hover:text-foreground",
-        collapsed && "justify-center px-0",
-      )}
-    >
-      <Icon className="size-[15px] shrink-0" aria-hidden="true" />
-      {collapsed ? <span className="sr-only">{label}</span> : label}
-    </a>
+  const link = useMemo(
+    () => (
+      <a
+        href={href}
+        target="_blank"
+        rel="noopener noreferrer"
+        onClick={closeMobile}
+        className={navLinkClassName(collapsed)}
+      >
+        <Icon className="size-[15px] shrink-0" aria-hidden="true" />
+        {collapsed ? (
+          <span className="sr-only">{label}</span>
+        ) : (
+          <>
+            <span>{label}</span>
+            <ExternalLinkIcon className="ml-auto size-3" aria-hidden="true" />
+          </>
+        )}
+      </a>
+    ),
+    [Icon, closeMobile, collapsed, href, label],
   )
 
-  if (!collapsed) {
-    return link
-  }
+  if (!collapsed) return link
 
   return (
     <Tooltip>
@@ -298,6 +303,7 @@ export function SidebarBody({ orgSlug }: { orgSlug: string }) {
         />
         <NavLink to="/store" icon={MergeIcon} label="Store" />
         <ExternalNavLink href="https://sproutos.me/docs" icon={BookOpenIcon} label="Docs" />
+        <ExternalNavLink href="https://sproutos.me/legal" icon={ScaleIcon} label="Legal" />
 
         <div className={cn("mx-[9px] my-2.5 h-px bg-sidebar-border", collapsed && "mx-2")} />
 
