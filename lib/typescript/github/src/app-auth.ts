@@ -182,7 +182,9 @@ function resolveInstallationTokenScope(
       }
 
     case "project-repository-read":
-      return exactRepositoryScope(request, { metadata: "read" })
+      // Repository metadata is not enough for `/git/ref/*`: GitHub authorizes ref reads through
+      // the Contents permission even though the response contains only an object SHA.
+      return exactRepositoryScope(request, { contents: "read" })
     case "agent-clone":
     case "sandbox-clone":
     case "upkeep-inspect":

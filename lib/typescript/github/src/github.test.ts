@@ -343,6 +343,23 @@ describe("app authentication", () => {
     expect(client.calls).toHaveLength(3)
   })
 
+  it("grants project repository HEAD checks the Contents permission GitHub requires for refs", async () => {
+    const client = fakeClient({
+      "POST /app/installations/42/access_tokens": () => ({
+        token: "ghs_head",
+        expires_at: new Date(Date.now() + 3_600_000).toISOString(),
+      }),
+    })
+    const store = createInstallationTokenStore({ client, signJwt: () => "j.w.t" })
+
+    await store.get(42, { purpose: "project-repository-read", repositoryId: REPO.id })
+
+    expect(client.calls[0].body).toStrictEqual({
+      repository_ids: [REPO.id],
+      permissions: { contents: "read" },
+    })
+  })
+
   it("never reuses a token across repositories or purposes, or gives Daytona administration", async () => {
     let minted = 0
     const client = fakeClient({
