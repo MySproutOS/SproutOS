@@ -13,6 +13,8 @@ export type RepositorySnapshotInput = {
   branch: string
   upstreamFullName: string
   upstreamBranch: string
+  /** Exact signed-template commit. When present, branch movement must not affect the snapshot. */
+  upstreamCommit?: string
   token: string
   signal?: AbortSignal
   targetUrl?: string
@@ -58,15 +60,27 @@ export async function copyRepositorySnapshot(input: RepositorySnapshotInput): Pr
   try {
     await git(["init", "--quiet"])
     await git(["remote", "add", "upstream", upstreamUrl])
-    await git([
-      "fetch",
-      "--quiet",
-      "--depth=1",
-      "--no-tags",
-      "upstream",
-      `+refs/heads/${input.upstreamBranch}:refs/remotes/upstream/source`,
-    ])
-    const upstreamSha = (await git(["rev-parse", "refs/remotes/upstream/source"])).stdout.trim()
+    let upstreamSha: string
+    if (input.upstreamCommit === undefined) {
+      await git([
+        "fetch",
+        "--quiet",
+        "--depth=1",
+        "--no-tags",
+        "upstream",
+        `+refs/heads/${input.upstreamBranch}:refs/remotes/upstream/source`,
+      ])
+      upstreamSha = (await git(["rev-parse", "refs/remotes/upstream/source"])).stdout.trim()
+    } else {
+      if (!/^[0-9a-f]{40}$/.test(input.upstreamCommit)) {
+        throw new Error("upstream commit must be a lowercase 40-character Git commit")
+      }
+      await git(["fetch", "--quiet", "--depth=1", "--no-tags", "upstream", input.upstreamCommit])
+      upstreamSha = (await git(["rev-parse", "FETCH_HEAD^{commit}"])).stdout.trim()
+      if (upstreamSha !== input.upstreamCommit) {
+        throw new Error("fetched upstream commit does not match the signed template commit")
+      }
+    }
     const tree = (await git(["show", "-s", "--format=%T", upstreamSha])).stdout.trim()
     const timestamp = (await git(["show", "-s", "--format=%aI", upstreamSha])).stdout.trim()
     const root = (

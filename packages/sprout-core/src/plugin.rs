@@ -328,6 +328,12 @@ impl<I: IsolationProvider> PluginRunner<I> {
         let stderr = join_output(stderr, "stderr", self.limits.max_stderr_bytes)?;
         let status = status.map_err(|error| SproutError::PluginSpawn(error.to_string()))?;
         if status.code() == Some(1) {
+            if stdout.bytes.is_empty() && !stderr.bytes.is_empty() {
+                return Err(SproutError::PluginFailed {
+                    status: status.to_string(),
+                    stderr: String::from_utf8_lossy(&stderr.bytes).into_owned(),
+                });
+            }
             return match protocol.decode_response(&stdout.bytes) {
                 Err(error) => Err(error),
                 Ok(_) => Err(SproutError::ProtocolViolation(
@@ -822,6 +828,28 @@ printf '{"changes":[]}'"#,
             )
             .await
             .unwrap();
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn launcher_failure_is_not_misreported_as_empty_protocol_json() {
+        let workspace = tempdir().unwrap();
+        let (_plugin_dir, plugin) = executable(
+            r#"cat >/dev/null
+printf 'sandbox setup failed\n' >&2
+exit 1"#,
+        );
+        let error = PluginRunner::new(TestIsolation, ApplyLimits::default())
+            .apply(
+                &plugin,
+                workspace.path(),
+                &JsonProtocol,
+                &serde_json::json!({}),
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(error.code(), ErrorCode::PluginFailed);
+        assert!(error.to_string().contains("sandbox setup failed"));
     }
 
     #[cfg(unix)]

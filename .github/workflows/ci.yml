@@ -199,6 +199,9 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Prove the ECS outer seccomp admits the Bubblewrap namespace boundary
+        run: bash tofu/ecs-seccomp-runtime.test.sh
+
       # The TypeScript integration tests drive this binary with a real AWS SDK client. Building it
       # here makes the shared-bucket tenant boundary part of the required test job instead of a
       # local-only assertion hidden behind `describe.runIf`.
@@ -577,7 +580,8 @@ jobs:
           bash -n \
             tofu/ecs-host-bootstrap.sh \
             tofu/ecs-host-bootstrap.test.sh \
-            tofu/ecs-seccomp-profile.test.sh
+            tofu/ecs-seccomp-profile.test.sh \
+            tofu/ecs-seccomp-runtime.test.sh
 
       # Fill proves every port on the idle release is healthy; cutover proves traffic moves only
       # after that and the drained colour reaches zero. They are separate state transitions and a
