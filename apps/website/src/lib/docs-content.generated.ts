@@ -746,9 +746,9 @@ export const GENERATED_DOC_CONTENT: Record<string, RenderableTreeNode[]> = {
         " ",
         "installed through SproutOS. Both are enabled initially and can be turned off independently. The",
         " ",
-        "client checks at most once a day through Android WorkManager, only on an unmetered network and while",
+        "client checks approximately once an hour through Android WorkManager, only on an unmetered network",
         " ",
-        "the battery and storage are not low. Android may defer that work further.",
+        "and while the battery and storage are not low. Android may defer that work further.",
       ],
     },
     {
