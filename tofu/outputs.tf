@@ -210,7 +210,7 @@ output "forum_static_distribution_id" {
 }
 
 output "forum_static_role_arn" {
-  description = "Role SproutOS-Agent-Forum assumes to publish. Set as AWS_ROLE_ARN there."
+  description = "Role SproutBiz assumes to publish forum static assets. Set as AWS_ROLE_ARN there."
   value       = one(aws_iam_role.forum_static_deploy[*].arn)
 }
 

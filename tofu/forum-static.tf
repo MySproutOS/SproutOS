@@ -1,16 +1,15 @@
 /**
  * Static assets for the forum, on their own bucket and their own distribution.
  *
- * The forum itself runs on the OVH box and answers `forum.sproutos.me` (see `dns.tf`). Its static
- * assets do not belong there: a single rented machine already carries ClickHouse, Kafka, tenant
- * Valkey and OpenSearch, and serving avatars and CSS from it spends the one resource that box has
- * no more of — bandwidth on a link every tenant's search and queue traffic also crosses.
+ * The application that answered `forum.sproutos.me` has been retired, but its static-assets
+ * distribution is retained. Keeping those bytes in S3 behind CloudFront avoids spending bandwidth
+ * on the OVH box that also carries ClickHouse, Kafka, tenant Valkey and OpenSearch.
  *
- * So the bytes come from S3 through CloudFront, and the forum only ever renders URLs pointing at
- * them. It is also the cheaper half by a wide margin: CloudFront's first tier is $0.085/GB against
- * an OVH box whose throughput is shared with everything else it does.
+ * The bytes therefore remain in S3 behind CloudFront. It is also the cheaper half by a wide margin:
+ * CloudFront's first tier is $0.085/GB against an OVH box whose throughput is shared with everything
+ * else it does.
  *
- * Uploaded from `SproutOS-Agent/SproutOS-Agent-Forum` by a role of its own, which can write this
+ * Uploaded from `MySproutOS/SproutBiz` by a role of its own, which can write this
  * bucket and invalidate this distribution and do nothing else in the account.
  */
 
@@ -272,7 +271,7 @@ resource "aws_route53_record" "forum_static_ipv6" {
   distribution. They are different repositories with different sets of people able to merge to them,
   and a shared role would make the smaller of the two a way to deploy the platform.
 
-  `SproutOS-Agent/SproutOS-Agent-Forum` is a **public** repository, which raises the stakes on the
+  `MySproutOS/SproutBiz` is a **public** repository, which raises the stakes on the
   `sub` condition rather than lowering them: a pull request from a fork must never be able to assume
   this. It cannot — `ref:refs/heads/main` is a branch in *this* repository, and a fork's workflow
   carries its own repository in the claim — but that is the reason the condition is a branch ref and

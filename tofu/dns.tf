@@ -135,39 +135,19 @@ resource "aws_route53_record" "alb_ipv6" {
 # ---------------------------------------------------------------------------
 
 /*
-  The forum, which is not on AWS.
+  A TXT-only tombstone for the retired forum hostname.
 
-  `*.sproutos.me` above resolves every tenant hostname to the load balancer, and `forum` would have
-  been swept up with them. It is not a tenant application — it is a dedicated site on the OVH box —
-  so it needs its own records.
-
-  **A more specific name beats a wildcard**, which is DNS and not a Route 53 behaviour: a query for
-  `forum.sproutos.me` matches the exact record and the wildcard is never consulted. So these two
-  records are the whole change; nothing has to be excluded from `local.alb_names`.
-
-  Plain A and AAAA records rather than aliases: an alias points at an AWS resource, and this is a
-  machine in a Canadian OVH datacentre. The address is therefore literal and hard-coded, and the
-  cost of that is stated in `variables.tf` — if the box is rebuilt on new addresses, this is what
-  has to change with it.
-
-  300s, not the 60s the validation records use. The forum's address changes when the box does,
-  which is rarely, and a five-minute TTL is the ordinary trade for a record that is looked up on
-  every page load and almost never edited.
+  The wildcard above otherwise sends `forum.sproutos.me` to the platform ALB after its old A and
+  AAAA records are removed. Route 53 synthesizes a wildcard answer only when no record of any type
+  exists at the requested name, so this record keeps the hostname non-routable without inventing a
+  replacement address.
 */
-resource "aws_route53_record" "forum_ipv4" {
+resource "aws_route53_record" "forum_disabled" {
   zone_id = data.aws_route53_zone.main.zone_id
   name    = "${var.forum_subdomain}.${var.control_plane_domain}"
-  type    = "A"
+  type    = "TXT"
   ttl     = 300
-  records = [var.ovh_host_ipv4]
-}
-
-resource "aws_route53_record" "forum_ipv6" {
-  zone_id = data.aws_route53_zone.main.zone_id
-  name    = "${var.forum_subdomain}.${var.control_plane_domain}"
-  type    = "AAAA"
-  ttl     = 300
-  records = [var.ovh_host_ipv6]
+  records = ["disabled"]
 }
 
 /*

@@ -271,9 +271,9 @@ variable "nat_instance_type" {
   The OVH host, by address, because DNS has to name one.
 
   Everything else in this estate is reached through an alias to something AWS names for us. The
-  forum is not ours to alias — it is a dedicated site on the box that also carries ClickHouse,
-  Kafka, tenant Valkey and OpenSearch — so these are the literal addresses `ovh/README.md` records,
-  and they are the one place in `tofu/` that has to change if the box moves.
+  services on the dedicated OVH box — ClickHouse, Kafka, tenant Valkey and OpenSearch — need literal
+  addresses instead. These are the addresses `ovh/README.md` records, and they are the one place in
+  `tofu/` that has to change if the box moves.
 */
 variable "ovh_host_ipv4" {
   description = "The OVH dedicated host's IPv4 address."
@@ -288,7 +288,7 @@ variable "ovh_host_ipv6" {
 }
 
 variable "forum_subdomain" {
-  description = "The label under control_plane_domain that resolves to the OVH host rather than the ALB."
+  description = "The retired forum label retained for its DNS tombstone, static-assets hostname and CORS origin."
   type        = string
   default     = "forum"
 }
@@ -348,13 +348,13 @@ variable "environment" {
 variable "forum_repo" {
   description = "The repository that publishes the forum's static assets."
   type        = string
-  default     = "SproutOS-Agent/SproutOS-Agent-Forum"
+  default     = "MySproutOS/SproutBiz"
 }
 
 variable "forum_repo_ids" {
   description = "The id-qualified form of forum_repo. See github_repo_ids for why both are trusted."
   type        = string
-  default     = "SproutOS-Agent@320371408/SproutOS-Agent-Forum@1345557757"
+  default     = "MySproutOS@319999162/SproutBiz@1345557757"
 }
 
 variable "web_image" {
