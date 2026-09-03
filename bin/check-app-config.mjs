@@ -71,6 +71,18 @@ if (!/"name"\s*:\s*"SERVICE_BUILD_BUCKET"/.test(apiContainer)) {
     "the API container must receive SERVICE_BUILD_BUCKET because deploy.ts signs primary build uploads",
   )
 }
+for (const key of [
+  "GITHUB_OAUTH_CLIENT_ID",
+  "GITHUB_OAUTH_CLIENT_SECRET",
+  "GOOGLE_OAUTH_CLIENT_ID",
+  "GOOGLE_OAUTH_CLIENT_SECRET",
+]) {
+  if (!new RegExp(`"name"\\s*:\\s*"${key}"`).test(apiContainer)) {
+    throw new Error(
+      `the API container must receive ${key} because sign-in method linking begins in the API`,
+    )
+  }
+}
 
 /**
  * Names that look like an environment variable, out of arbitrary text.

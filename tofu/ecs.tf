@@ -68,6 +68,13 @@ locals {
     "DAYTONA_API_KEY",
     "DAYTONA_ORGANIZATION_ID",
     "DEPLOY_TOKEN_SECRET",
+    # Sign-in-method linking begins in the API and finishes in the website callback. The API needs
+    # the same OAuth client configuration to construct a provider authorization URL; leaving these
+    # only on the website makes ordinary sign-in work while every explicit link returns 500.
+    "GITHUB_OAUTH_CLIENT_ID",
+    "GITHUB_OAUTH_CLIENT_SECRET",
+    "GOOGLE_OAUTH_CLIENT_ID",
+    "GOOGLE_OAUTH_CLIENT_SECRET",
     "GITHUB_APP_ID",
     "GITHUB_APP_PRIVATE_KEY",
     "GITHUB_WEBHOOK_SECRET",

@@ -322,6 +322,22 @@
           "valueFrom": "arn:aws:ssm:us-east-1:471112590391:parameter/sproutos/application/DEPLOY_TOKEN_SECRET"
         },
         {
+          "name": "GITHUB_OAUTH_CLIENT_ID",
+          "valueFrom": "arn:aws:ssm:us-east-1:471112590391:parameter/sproutos/application/GITHUB_OAUTH_CLIENT_ID"
+        },
+        {
+          "name": "GITHUB_OAUTH_CLIENT_SECRET",
+          "valueFrom": "arn:aws:ssm:us-east-1:471112590391:parameter/sproutos/application/GITHUB_OAUTH_CLIENT_SECRET"
+        },
+        {
+          "name": "GOOGLE_OAUTH_CLIENT_ID",
+          "valueFrom": "arn:aws:ssm:us-east-1:471112590391:parameter/sproutos/application/GOOGLE_OAUTH_CLIENT_ID"
+        },
+        {
+          "name": "GOOGLE_OAUTH_CLIENT_SECRET",
+          "valueFrom": "arn:aws:ssm:us-east-1:471112590391:parameter/sproutos/application/GOOGLE_OAUTH_CLIENT_SECRET"
+        },
+        {
           "name": "GITHUB_APP_ID",
           "valueFrom": "arn:aws:ssm:us-east-1:471112590391:parameter/sproutos/application/GITHUB_APP_ID"
         },
