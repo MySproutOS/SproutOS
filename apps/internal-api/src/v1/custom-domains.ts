@@ -1,7 +1,13 @@
 import { randomBytes } from "node:crypto"
 import { isIP } from "node:net"
 import { domainToASCII } from "node:url"
-import { crudAuditLog, crudCustomDomain, fetchCustomDomain, fetchProject } from "@lib/dao"
+import {
+  crudAuditLog,
+  crudCustomDomain,
+  fetchCustomDomain,
+  fetchManagedCustomDomainPolicy,
+  fetchProject,
+} from "@lib/dao"
 import { clearOwnershipTxtCache, CUSTOM_DOMAIN_KINDS, enqueue } from "@lib/jobs"
 import { withdrawRoute } from "@lib/lambda"
 import { srnFor } from "@lib/srn"
@@ -83,6 +89,7 @@ type DomainPresentationRow = {
   projectName: string
   projectSlug: string
   hostname: string
+  managedDomainPolicyId: string | null
   status: string
   statusReason: string | null
   isApex: boolean
@@ -136,6 +143,7 @@ function present(row: DomainPresentationRow) {
     id: row.id,
     project: { id: row.projectId, name: row.projectName, slug: row.projectSlug },
     hostname: row.hostname,
+    domainKind: row.managedDomainPolicyId === null ? ("ordinary" as const) : ("managed" as const),
     status: row.status,
     statusReason: row.statusReason,
     isApex: row.isApex,
@@ -146,13 +154,65 @@ function present(row: DomainPresentationRow) {
     createdAt: row.createdAt.toISOString(),
     instructions: {
       verification: {
+        required: row.managedDomainPolicyId === null,
         type: "TXT" as const,
-        name: verificationName(row.hostname),
-        value: row.verificationToken,
+        name: row.managedDomainPolicyId === null ? verificationName(row.hostname) : null,
+        value: row.managedDomainPolicyId === null ? row.verificationToken : null,
       },
       traffic,
     },
   }
+}
+
+export const MANAGED_DOMAIN_RESERVED_LABELS = new Set([
+  "www",
+  "api",
+  "admin",
+  "app",
+  "dashboard",
+  "static",
+  "media",
+  "auth",
+  "login",
+  "mail",
+  "support",
+])
+
+export function supportsCustomDomains(servingMode: string | null): boolean {
+  return servingMode === "serverless"
+}
+
+export function classifyManagedHostname(
+  rawHostname: string,
+  hostname: string,
+  policies: Array<{ id: string; suffix: string; organizationId: string; status: string }>,
+): { policyId: string; organizationId: string } | { error: string } | null {
+  const policy = policies.find(
+    (candidate) => hostname === candidate.suffix || hostname.endsWith(`.${candidate.suffix}`),
+  )
+  if (policy === undefined) return null
+  if (policy.status !== "active") {
+    return { error: "Managed hostnames under this suffix are currently disabled" }
+  }
+  if (
+    rawHostname.trim().replace(/\.$/, "").toLowerCase() !== hostname ||
+    hostname.includes("xn--")
+  ) {
+    return { error: "Managed hostnames must contain ASCII characters only" }
+  }
+  const labels = hostname.split(".")
+  const suffixLabels = policy.suffix.split(".")
+  if (labels.length !== suffixLabels.length + 1) {
+    return { error: "Managed hostnames must be a single-label child of the managed suffix" }
+  }
+  const label = labels[0] ?? ""
+  if (!/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$|^[a-z0-9]$/.test(label)) {
+    return { error: "Managed hostnames must contain one valid ASCII DNS label" }
+  }
+  if (MANAGED_DOMAIN_RESERVED_LABELS.has(label)) {
+    return { error: `${label} is reserved and cannot be used as a managed hostname` }
+  }
+  return { policyId: policy.id, organizationId: policy.organizationId }
 }
 
 async function enqueueReconciliation(organizationId: string, domainId: string): Promise<void> {
@@ -242,10 +302,26 @@ const routes = app
         return c.json({ message: CUSTOM_DOMAINS_DISABLED_REASON }, 503)
       }
       const { projectId } = c.req.valid("param")
-      const hostname = normalizeCustomDomainHostname(c.req.valid("json").hostname)
+      const rawHostname = c.req.valid("json").hostname
+      const hostname = normalizeCustomDomainHostname(rawHostname)
       if (hostname === null) return throwBadRequest(c, "Hostname is not a valid DNS name")
       const registrable = getDomain(hostname, { allowPrivateDomains: true })
       if (registrable === null) return throwBadRequest(c, "Hostname is not a registrable domain")
+
+      const managed = classifyManagedHostname(
+        rawHostname,
+        hostname,
+        await fetchManagedCustomDomainPolicy(db).listLive([
+          "id",
+          "suffix",
+          "organizationId",
+          "status",
+        ]),
+      )
+      if (managed !== null && "error" in managed) return throwBadRequest(c, managed.error)
+      if (managed !== null && managed.organizationId !== c.var.organization.id) {
+        return throwConflict(c, `${hostname} is reserved for another organization`)
+      }
 
       const project = await fetchProject(db).getInOrganization(c.var.organization.id, projectId, [
         "id",
@@ -257,7 +333,7 @@ const routes = app
       ])
       if (project === undefined) return throwNotFound(c, "Project not found")
       if (project.isGroup) return throwBadRequest(c, "A project group serves no traffic")
-      if (project.servingMode !== "serverless") {
+      if (!supportsCustomDomains(project.servingMode)) {
         return throwBadRequest(c, "Only dynamic serverless projects support custom domains")
       }
       if (project.liveDeploymentId === null) {
@@ -274,6 +350,7 @@ const routes = app
             organizationId: c.var.organization.id,
             projectId,
             hostname,
+            managedDomainPolicyId: managed?.policyId ?? null,
             isApex: looksLikeApex(hostname),
             verificationToken: `sproutos-domain-verification=${randomBytes(16).toString("hex")}`,
             status: "pending_dns",
@@ -338,6 +415,7 @@ const routes = app
           "id",
           "projectId",
           "hostname",
+          "managedDomainPolicyId",
           "status",
           "statusReason",
           "isApex",

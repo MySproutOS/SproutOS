@@ -37,6 +37,14 @@ function SettingsLayout() {
         <Link to="/orgs/$orgSlug/settings/github" params={{ orgSlug }} className={tabClassName}>
           GitHub
         </Link>
+        <Link
+          to="/orgs/$orgSlug/settings/sign-in-methods"
+          params={{ orgSlug }}
+          search={{ sign_in_method: undefined }}
+          className={tabClassName}
+        >
+          Sign-in methods
+        </Link>
         <Link to="/orgs/$orgSlug/settings/api-keys" params={{ orgSlug }} className={tabClassName}>
           API keys
         </Link>

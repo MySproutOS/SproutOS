@@ -31,6 +31,9 @@ type Client = {
  * grammar is the contract and the two halves are more readable apart than a raw `project:delete`.
  */
 function describe(scope: string): { resource: string; action: string } {
+  if (scope === "github:identity") {
+    return { resource: "GitHub contributions", action: "Identify" }
+  }
   const [resource, action] = scope.split(":")
   return { resource: resource ?? scope, action: action ?? "" }
 }

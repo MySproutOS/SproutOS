@@ -304,6 +304,57 @@ describe("OAuth FastAPI and database acceptance", () => {
   })
 
   it.skipIf(!reachable || !valkeyReachable || !kmsUp)(
+    "returns only live verified GitHub identity claims with github:identity",
+    async () => {
+      const accountId = v7()
+      await db
+        .insertInto("account")
+        .values({
+          id: accountId,
+          userId: owner!.id,
+          type: "oauth",
+          provider: "github",
+          providerAccountId: "987654321",
+          displayIdentity: "original-handle",
+        })
+        .execute()
+
+      try {
+        const scopedToken = await authorize(["github:identity"], "github-identity")
+        const scoped = await oauthCall(scopedToken, "GET", "/v1/oauth/userinfo")
+        expect(scoped).toEqual({
+          status: 200,
+          json: {
+            sub: owner!.id,
+            github_user_id: "987654321",
+            github_login: "original-handle",
+          },
+        })
+
+        await db
+          .updateTable("account")
+          .set({ displayIdentity: "renamed-handle", updatedAt: new Date() })
+          .where("id", "=", accountId)
+          .execute()
+        const renamed = await oauthCall(scopedToken, "GET", "/v1/oauth/userinfo")
+        expect(renamed.json).toMatchObject({ github_login: "renamed-handle" })
+
+        const unscopedToken = await authorize(["project:read"], "without-github-identity")
+        expect((await oauthCall(unscopedToken, "GET", "/v1/oauth/userinfo")).json).toEqual({
+          sub: owner!.id,
+        })
+
+        await db.deleteFrom("account").where("id", "=", accountId).execute()
+        expect((await oauthCall(scopedToken, "GET", "/v1/oauth/userinfo")).json).toEqual({
+          sub: owner!.id,
+        })
+      } finally {
+        await db.deleteFrom("account").where("id", "=", accountId).execute()
+      }
+    },
+  )
+
+  it.skipIf(!reachable || !valkeyReachable || !kmsUp)(
     "proves Google-only consent, credit enforcement, and a database-backed FastAPI app",
     async () => {
       const linkedAccounts = await db

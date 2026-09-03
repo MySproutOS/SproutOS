@@ -2,7 +2,6 @@
 
 import type {
   DeleteV1OrgsByOrgSlugProjectsByProjectIdResponse,
-  GetAdminUsersResponse,
   GetV1OrgsByOrgSlugAgentCredentialsResponse,
   GetV1OrgsByOrgSlugAnalysesByAnalysisIdResponse,
   GetV1OrgsByOrgSlugAnalysesResponse,
@@ -47,12 +46,12 @@ import type {
   GetV1UserMeExportResponse,
   GetV1UserMeImpersonationResponse,
   GetV1UserMeProfileResponse,
+  GetV1UserSignInMethodsResponse,
   PatchV1OrgsByOrgSlugAgentCredentialsByCredentialIdResponse,
   PatchV1OrgsByOrgSlugProjectsByProjectIdResponse,
   PatchV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsByRunIdJobResponse,
   PatchV1OrgsByOrgSlugResponse,
   PatchV1UserMeProfileResponse,
-  PostAdminUsersImpersonateResponse,
   PostV1AuthCliTokenResponse,
   PostV1OrgsByOrgSlugAgentCredentialsResponse,
   PostV1OrgsByOrgSlugAgentProxyTokenRefreshResponse,
@@ -988,22 +987,12 @@ export const getV1UserMeImpersonationResponseTransformer = async (
   return data
 }
 
-export const getAdminUsersResponseTransformer = async (
+export const getV1UserSignInMethodsResponseTransformer = async (
   data: any,
-): Promise<GetAdminUsersResponse> => {
-  data.items = data.items.map((item: any) => {
-    if (item.deletedAt) {
-      item.deletedAt = new Date(item.deletedAt)
-    }
-    item.createdAt = new Date(item.createdAt)
+): Promise<GetV1UserSignInMethodsResponse> => {
+  data.data = data.data.map((item: any) => {
+    item.connectedAt = new Date(item.connectedAt)
     return item
   })
-  return data
-}
-
-export const postAdminUsersImpersonateResponseTransformer = async (
-  data: any,
-): Promise<PostAdminUsersImpersonateResponse> => {
-  data.expiresAt = new Date(data.expiresAt)
   return data
 }

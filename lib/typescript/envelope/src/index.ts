@@ -14,3 +14,8 @@ export {
   sealProjectFileContents,
 } from "./project-env"
 export type { EncryptionContext, EnvelopeConfig, SealedValue } from "./types"
+export {
+  oauthIdentityFlowContext,
+  openOauthIdentityVerifier,
+  sealOauthIdentityVerifier,
+} from "./oauth-identity"

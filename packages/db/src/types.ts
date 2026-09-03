@@ -34,6 +34,7 @@ export interface Account {
   accessTokenKmsKeyId: string | null
   accessTokenWrappedDek: string | null
   createdAt: Generated<Timestamp>
+  displayIdentity: string | null
   id: string
   provider: string
   providerAccountId: string
@@ -524,6 +525,7 @@ export interface CustomDomain {
   id: string
   isApex: Generated<boolean>
   lastCheckedAt: Timestamp | null
+  managedDomainPolicyId: string | null
   nextRenewalAt: Timestamp | null
   nextRetryAt: Timestamp | null
   organizationId: string
@@ -691,6 +693,21 @@ export interface InfraDeployment {
   updatedAt: Generated<Timestamp>
 }
 
+export interface ManagedCustomDomainPolicy {
+  createdAt: Generated<Timestamp>
+  createdByUserId: string
+  deletedAt: Timestamp | null
+  deletedByUserId: string | null
+  disabledAt: Timestamp | null
+  disabledByUserId: string | null
+  id: string
+  organizationId: string
+  status: Generated<string>
+  suffix: string
+  updatedAt: Generated<Timestamp>
+  updatedByUserId: string
+}
+
 export interface MemberPermission {
   actions: Generated<string[]>
   createdAt: Generated<Timestamp>
@@ -819,6 +836,23 @@ export interface OauthGrant {
   revokedAt: Timestamp | null
   scopes: Generated<string[]>
   updatedAt: Generated<Timestamp>
+  userId: string
+}
+
+export interface OauthIdentityFlow {
+  consumedAt: Timestamp | null
+  createdAt: Generated<Timestamp>
+  expiresAt: Timestamp
+  id: string
+  intent: string
+  pkceCiphertext: string
+  pkceKmsKeyId: string
+  pkceWrappedDek: string
+  provider: string
+  returnTo: string
+  sessionKey: string
+  stateHash: string
+  targetAccountId: string | null
   userId: string
 }
 
@@ -1649,6 +1683,7 @@ export interface DB {
   deploymentCatalogueImport: DeploymentCatalogueImport
   githubInstallation: GithubInstallation
   infraDeployment: InfraDeployment
+  managedCustomDomainPolicy: ManagedCustomDomainPolicy
   memberPermission: MemberPermission
   memberRole: MemberRole
   meteringImportState: MeteringImportState
@@ -1662,6 +1697,7 @@ export interface DB {
   oauthClientRedirectUri: OauthClientRedirectUri
   oauthClientSecret: OauthClientSecret
   oauthGrant: OauthGrant
+  oauthIdentityFlow: OauthIdentityFlow
   oauthRefreshToken: OauthRefreshToken
   oauthSigningKey: OauthSigningKey
   objectStorageMeteringState: ObjectStorageMeteringState

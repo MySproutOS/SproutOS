@@ -40,6 +40,7 @@ import user from "./user"
 import webhooks from "./webhooks"
 import workflows from "./workflows"
 import sproutosSkill from "./sproutos-skill"
+import signInMethods from "./sign-in-methods"
 
 /*
   Grouped rather than chained flat.
@@ -163,6 +164,7 @@ app.route("/regions", regions)
 app.route("/store", store)
 app.route("/templates", templates)
 app.route("/user", user)
+app.route("/user/sign-in-methods", signInMethods)
 app.route("/", unauthenticated)
 
 export default app

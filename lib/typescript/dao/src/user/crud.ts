@@ -60,7 +60,29 @@ export function crudUser(db: Kysely<DB>) {
     return db.transaction().execute((tx) => completeDeletion(tx, userId))
   }
 
-  return { beginUserDeletion, completeUserDeletion, createUser, deleteUser }
+  async function updateGithubIdentity(
+    userId: string,
+    identity: { githubLogin: string | null; githubUserId: bigint } | null,
+  ) {
+    return await db
+      .updateTable("user")
+      .set({
+        githubLogin: identity === null ? null : identity.githubLogin,
+        githubUserId: identity === null ? null : identity.githubUserId,
+        updatedAt: new Date(),
+      })
+      .where("id", "=", userId)
+      .returning(["id", "githubLogin", "githubUserId"])
+      .executeTakeFirst()
+  }
+
+  return {
+    beginUserDeletion,
+    completeUserDeletion,
+    createUser,
+    deleteUser,
+    updateGithubIdentity,
+  }
 }
 
 async function activeOwnedOrganizations(db: Kysely<DB>, userId: string) {

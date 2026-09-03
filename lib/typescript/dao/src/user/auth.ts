@@ -11,7 +11,7 @@ export type SessionUser = Pick<Selectable<DB["user"]>, "id" | "isAdmin" | "name"
  *  data no caller here reads. */
 export type AuthSession = Pick<
   Selectable<DB["session"]>,
-  "sessionKey" | "userId" | "expires" | "impersonatedByUserId"
+  "sessionKey" | "userId" | "expires" | "impersonatedByUserId" | "reauthenticatedAt"
 >
 
 type SessionValidationResult = {
@@ -29,6 +29,7 @@ export function authUser(db: Kysely<DB>) {
         "session.sessionKey",
         "session.expires",
         "session.userId",
+        "session.reauthenticatedAt",
         // Read on every request, unlike the other wide columns, because every *write* has to stamp
         // it. A route that could not see it would attribute a support action to the customer.
         "session.impersonatedByUserId",
@@ -47,6 +48,7 @@ export function authUser(db: Kysely<DB>) {
       userId: row.userId,
       expires: row.expires,
       impersonatedByUserId: row.impersonatedByUserId,
+      reauthenticatedAt: row.reauthenticatedAt,
     }
     const user: SessionUser = {
       id: row.id,
@@ -80,5 +82,15 @@ export function authUser(db: Kysely<DB>) {
     return { session, user }
   }
 
-  return { validateSessionToken }
+  async function markReauthenticated(sessionKey: string, userId: string): Promise<boolean> {
+    const result = await db
+      .updateTable("session")
+      .set({ reauthenticatedAt: new Date() })
+      .where("sessionKey", "=", sessionKey)
+      .where("userId", "=", userId)
+      .executeTakeFirst()
+    return Number(result.numUpdatedRows) === 1
+  }
+
+  return { markReauthenticated, validateSessionToken }
 }
