@@ -123,8 +123,8 @@ contact SproutOS operations instead of relying only on unpublishing the listing.
 
 The Android client has separate switches for updating SproutOS itself and updating apps already
 installed through SproutOS. Both are enabled initially and can be turned off independently. The
-client checks at most once a day through Android WorkManager, only on an unmetered network and while
-the battery and storage are not low. Android may defer that work further.
+client checks approximately once an hour through Android WorkManager, only on an unmetered network
+and while the battery and storage are not low. Android may defer that work further.
 
 Automatic work is update-only. It never installs a new catalogue app, downgrades an installed app,
 or replaces an app whose package name or signing certificate differs from the verified release.
