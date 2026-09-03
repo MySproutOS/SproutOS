@@ -318,15 +318,20 @@ function DomainCard({ orgSlug, domain }: { orgSlug: string; domain: CustomDomain
               DNS records
             </h3>
             <p className="text-xs text-muted-foreground">
-              Keep the ownership TXT record in place, including after activation.
+              {domain.instructions.verification.required
+                ? "Keep the ownership TXT record in place, including after activation."
+                : "This hostname is covered by your organization's managed-domain policy."}
             </p>
           </div>
-          <DnsRecord
-            type={domain.instructions.verification.type}
-            name={domain.instructions.verification.name}
-            value={domain.instructions.verification.value}
-            note="Proves that you control this hostname."
-          />
+          {domain.instructions.verification.name !== null &&
+          domain.instructions.verification.value !== null ? (
+            <DnsRecord
+              type={domain.instructions.verification.type}
+              name={domain.instructions.verification.name}
+              value={domain.instructions.verification.value}
+              note="Proves that you control this hostname."
+            />
+          ) : null}
           {domain.instructions.traffic.map((record) => (
             <DnsRecord
               key={`${record.type}:${record.name}:${record.value}`}

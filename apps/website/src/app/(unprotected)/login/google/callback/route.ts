@@ -14,6 +14,7 @@ import {
 import { googleOAuthClient, parseGoogleIdToken } from "@website/lib/oauth"
 import { RETURN_TO_COOKIE, sanitizeReturnTo } from "@website/lib/return-to"
 import { mayLinkByEmail } from "@website/lib/account-linking"
+import { completeIdentityFlow, consumeIdentityFlow } from "@website/lib/identity-linking"
 import { cookies } from "next/headers"
 
 const PROVIDER = "google"
@@ -36,18 +37,22 @@ export async function GET(request: Request): Promise<Response> {
   // cookie of that name and leaves the domain-scoped one behind.
   const transientScope = { path: "/", domain: cookieDomain() } as const
   const storedState = cookieStore.get("google_oauth_state")?.value ?? null
-  const codeVerifier = cookieStore.get("google_code_verifier")?.value ?? null
+  const cookieVerifier = cookieStore.get("google_code_verifier")?.value ?? null
   const returnTo = sanitizeReturnTo(cookieStore.get(RETURN_TO_COOKIE)?.value ?? null)
   cookieStore.delete({ name: "google_oauth_state", ...transientScope })
   cookieStore.delete({ name: "google_code_verifier", ...transientScope })
   cookieStore.delete({ name: RETURN_TO_COOKIE, ...transientScope })
 
-  if (code === null || state === null || storedState === null || codeVerifier === null) {
-    return badRequest(
-      `missing code=${code !== null} state=${state !== null} storedState=${storedState !== null} verifier=${codeVerifier !== null}`,
-    )
+  if (code === null || state === null) {
+    return badRequest(`missing code=${code !== null} state=${state !== null}`)
   }
-  if (!constantTimeEqualUtf8(state, storedState)) {
+  const identityFlow = await consumeIdentityFlow(state)
+  const codeVerifier = identityFlow?.verifier ?? cookieVerifier
+  if (codeVerifier === null) return badRequest("missing PKCE verifier")
+  if (
+    identityFlow === null &&
+    (storedState === null || !constantTimeEqualUtf8(state, storedState))
+  ) {
     return badRequest("state did not match the cookie")
   }
 
@@ -75,6 +80,17 @@ export async function GET(request: Request): Promise<Response> {
     return badRequest(`unreadable id_token: ${String(cause)}`)
   }
 
+  if (identityFlow !== null) {
+    return await completeIdentityFlow({
+      flow: identityFlow,
+      provider: PROVIDER,
+      providerAccountId: claims.sub,
+      displayIdentity: claims.email,
+      tokens,
+      request,
+    })
+  }
+
   const existingAccount = await db
     .selectFrom("account")
     .where("provider", "=", PROVIDER)
@@ -97,6 +113,7 @@ export async function GET(request: Request): Promise<Response> {
     type: "oauth",
     provider: PROVIDER,
     providerAccountId: claims.sub,
+    displayIdentity: claims.email,
     accessTokenCiphertext: sealed.ciphertext,
     accessTokenWrappedDek: sealed.wrappedDek,
     accessTokenKmsKeyId: sealed.kmsKeyId,

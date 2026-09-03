@@ -9,14 +9,68 @@ import {
 } from "@tanstack/react-query"
 
 import { client } from "../client.gen"
-import { getAdminUsers, type Options, postAdminUsersImpersonate } from "../sdk.gen"
+import {
+  deleteAdminManagedDomainPoliciesByPolicyId,
+  getAdminManagedDomainPolicies,
+  getAdminManagedDomainPoliciesByPolicyId,
+  getAdminUsers,
+  type Options,
+  patchAdminManagedDomainPoliciesByPolicyId,
+  postAdminManagedDomainPolicies,
+  postAdminStoreListingsByListingIdAndroidRelease,
+  postAdminUsersImpersonate,
+} from "../sdk.gen"
 import type {
+  DeleteAdminManagedDomainPoliciesByPolicyIdData,
+  DeleteAdminManagedDomainPoliciesByPolicyIdError,
+  DeleteAdminManagedDomainPoliciesByPolicyIdResponse,
+  GetAdminManagedDomainPoliciesByPolicyIdData,
+  GetAdminManagedDomainPoliciesByPolicyIdError,
+  GetAdminManagedDomainPoliciesByPolicyIdResponse,
+  GetAdminManagedDomainPoliciesData,
+  GetAdminManagedDomainPoliciesResponse,
   GetAdminUsersData,
   GetAdminUsersResponse,
+  PatchAdminManagedDomainPoliciesByPolicyIdData,
+  PatchAdminManagedDomainPoliciesByPolicyIdError,
+  PatchAdminManagedDomainPoliciesByPolicyIdResponse,
+  PostAdminManagedDomainPoliciesData,
+  PostAdminManagedDomainPoliciesError,
+  PostAdminManagedDomainPoliciesResponse,
+  PostAdminStoreListingsByListingIdAndroidReleaseData,
+  PostAdminStoreListingsByListingIdAndroidReleaseError,
+  PostAdminStoreListingsByListingIdAndroidReleaseResponse,
   PostAdminUsersImpersonateData,
   PostAdminUsersImpersonateError,
   PostAdminUsersImpersonateResponse,
 } from "../types.gen"
+
+/**
+ * Selects the exact signed Android release published by a global listing
+ */
+export const postAdminStoreListingsByListingIdAndroidReleaseMutation = (
+  options?: Partial<Options<PostAdminStoreListingsByListingIdAndroidReleaseData>>,
+): UseMutationOptions<
+  PostAdminStoreListingsByListingIdAndroidReleaseResponse,
+  PostAdminStoreListingsByListingIdAndroidReleaseError,
+  Options<PostAdminStoreListingsByListingIdAndroidReleaseData>
+> => {
+  const mutationOptions: UseMutationOptions<
+    PostAdminStoreListingsByListingIdAndroidReleaseResponse,
+    PostAdminStoreListingsByListingIdAndroidReleaseError,
+    Options<PostAdminStoreListingsByListingIdAndroidReleaseData>
+  > = {
+    mutationFn: async (fnOptions) => {
+      const { data } = await postAdminStoreListingsByListingIdAndroidRelease({
+        ...options,
+        ...fnOptions,
+        throwOnError: true,
+      })
+      return data
+    },
+  }
+  return mutationOptions
+}
 
 export type QueryKey<TOptions extends Options> = [
   Pick<TOptions, "baseUrl" | "body" | "headers" | "path" | "query"> & {
@@ -55,6 +109,143 @@ const createQueryKey = <TOptions extends Options>(
     params.query = options.query
   }
   return [params]
+}
+
+export const getAdminManagedDomainPoliciesQueryKey = (
+  options?: Options<GetAdminManagedDomainPoliciesData>,
+) => createQueryKey("getAdminManagedDomainPolicies", options)
+
+/**
+ * Lists managed custom-domain policies
+ */
+export const getAdminManagedDomainPoliciesOptions = (
+  options?: Options<GetAdminManagedDomainPoliciesData>,
+) =>
+  queryOptions<
+    GetAdminManagedDomainPoliciesResponse,
+    DefaultError,
+    GetAdminManagedDomainPoliciesResponse,
+    ReturnType<typeof getAdminManagedDomainPoliciesQueryKey>
+  >({
+    queryFn: async ({ queryKey, signal }) => {
+      const { data } = await getAdminManagedDomainPolicies({
+        ...options,
+        ...queryKey[0],
+        signal,
+        throwOnError: true,
+      })
+      return data
+    },
+    queryKey: getAdminManagedDomainPoliciesQueryKey(options),
+  })
+
+/**
+ * Creates an organization-bound managed domain suffix
+ */
+export const postAdminManagedDomainPoliciesMutation = (
+  options?: Partial<Options<PostAdminManagedDomainPoliciesData>>,
+): UseMutationOptions<
+  PostAdminManagedDomainPoliciesResponse,
+  PostAdminManagedDomainPoliciesError,
+  Options<PostAdminManagedDomainPoliciesData>
+> => {
+  const mutationOptions: UseMutationOptions<
+    PostAdminManagedDomainPoliciesResponse,
+    PostAdminManagedDomainPoliciesError,
+    Options<PostAdminManagedDomainPoliciesData>
+  > = {
+    mutationFn: async (fnOptions) => {
+      const { data } = await postAdminManagedDomainPolicies({
+        ...options,
+        ...fnOptions,
+        throwOnError: true,
+      })
+      return data
+    },
+  }
+  return mutationOptions
+}
+
+/**
+ * Soft-deletes a managed policy and tears down attached domains
+ */
+export const deleteAdminManagedDomainPoliciesByPolicyIdMutation = (
+  options?: Partial<Options<DeleteAdminManagedDomainPoliciesByPolicyIdData>>,
+): UseMutationOptions<
+  DeleteAdminManagedDomainPoliciesByPolicyIdResponse,
+  DeleteAdminManagedDomainPoliciesByPolicyIdError,
+  Options<DeleteAdminManagedDomainPoliciesByPolicyIdData>
+> => {
+  const mutationOptions: UseMutationOptions<
+    DeleteAdminManagedDomainPoliciesByPolicyIdResponse,
+    DeleteAdminManagedDomainPoliciesByPolicyIdError,
+    Options<DeleteAdminManagedDomainPoliciesByPolicyIdData>
+  > = {
+    mutationFn: async (fnOptions) => {
+      const { data } = await deleteAdminManagedDomainPoliciesByPolicyId({
+        ...options,
+        ...fnOptions,
+        throwOnError: true,
+      })
+      return data
+    },
+  }
+  return mutationOptions
+}
+
+export const getAdminManagedDomainPoliciesByPolicyIdQueryKey = (
+  options: Options<GetAdminManagedDomainPoliciesByPolicyIdData>,
+) => createQueryKey("getAdminManagedDomainPoliciesByPolicyId", options)
+
+/**
+ * Gets one managed custom-domain policy
+ */
+export const getAdminManagedDomainPoliciesByPolicyIdOptions = (
+  options: Options<GetAdminManagedDomainPoliciesByPolicyIdData>,
+) =>
+  queryOptions<
+    GetAdminManagedDomainPoliciesByPolicyIdResponse,
+    GetAdminManagedDomainPoliciesByPolicyIdError,
+    GetAdminManagedDomainPoliciesByPolicyIdResponse,
+    ReturnType<typeof getAdminManagedDomainPoliciesByPolicyIdQueryKey>
+  >({
+    queryFn: async ({ queryKey, signal }) => {
+      const { data } = await getAdminManagedDomainPoliciesByPolicyId({
+        ...options,
+        ...queryKey[0],
+        signal,
+        throwOnError: true,
+      })
+      return data
+    },
+    queryKey: getAdminManagedDomainPoliciesByPolicyIdQueryKey(options),
+  })
+
+/**
+ * Updates or disables a managed domain policy
+ */
+export const patchAdminManagedDomainPoliciesByPolicyIdMutation = (
+  options?: Partial<Options<PatchAdminManagedDomainPoliciesByPolicyIdData>>,
+): UseMutationOptions<
+  PatchAdminManagedDomainPoliciesByPolicyIdResponse,
+  PatchAdminManagedDomainPoliciesByPolicyIdError,
+  Options<PatchAdminManagedDomainPoliciesByPolicyIdData>
+> => {
+  const mutationOptions: UseMutationOptions<
+    PatchAdminManagedDomainPoliciesByPolicyIdResponse,
+    PatchAdminManagedDomainPoliciesByPolicyIdError,
+    Options<PatchAdminManagedDomainPoliciesByPolicyIdData>
+  > = {
+    mutationFn: async (fnOptions) => {
+      const { data } = await patchAdminManagedDomainPoliciesByPolicyId({
+        ...options,
+        ...fnOptions,
+        throwOnError: true,
+      })
+      return data
+    },
+  }
+  return mutationOptions
 }
 
 export const getAdminUsersQueryKey = (options?: Options<GetAdminUsersData>) =>

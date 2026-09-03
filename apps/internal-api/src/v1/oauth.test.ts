@@ -34,6 +34,8 @@ describe("the OAuth discovery document", () => {
     expect(document.token_endpoint).toBe(`${API}/v1/oauth/token`)
     expect(document.introspection_endpoint).toBe(`${API}/v1/oauth/introspect`)
     expect(document.revocation_endpoint).toBe(`${API}/v1/oauth/revoke`)
+    expect(document.userinfo_endpoint).toBe(`${API}/v1/oauth/userinfo`)
+    expect(document.scopes_supported).toContain("github:identity")
   })
 
   it("keeps the issuer and the authorization page on the website host", async () => {

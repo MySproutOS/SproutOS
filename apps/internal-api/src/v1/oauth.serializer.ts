@@ -56,11 +56,18 @@ export const oauthSchemaDiscoveryResponse = Type.Object({
   token_endpoint: Type.String(),
   introspection_endpoint: Type.String(),
   revocation_endpoint: Type.String(),
+  userinfo_endpoint: Type.String(),
   scopes_supported: Type.Array(Type.String()),
   response_types_supported: Type.Array(Type.String()),
   grant_types_supported: Type.Array(Type.String()),
   code_challenge_methods_supported: Type.Array(Type.String()),
   token_endpoint_auth_methods_supported: Type.Array(Type.String()),
+})
+
+export const oauthSchemaUserinfoResponse = Type.Object({
+  sub: Type.String(),
+  github_user_id: Type.Optional(Type.String()),
+  github_login: Type.Optional(Type.String()),
 })
 
 export const oauthSchemaConsentRequest = Type.Object({

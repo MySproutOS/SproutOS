@@ -12,6 +12,7 @@ import {
   setSessionTokenCookie,
 } from "@website/lib/auth"
 import { fetchGitHubUser, githubOAuthClient } from "@website/lib/oauth"
+import { completeIdentityFlow, consumeIdentityFlow } from "@website/lib/identity-linking"
 import { RETURN_TO_COOKIE, sanitizeReturnTo } from "@website/lib/return-to"
 import { cookies } from "next/headers"
 
@@ -45,7 +46,7 @@ export async function GET(request: Request): Promise<Response> {
   // as setting it host-only in the first place.
   const transientScope = { path: "/", domain: cookieDomain() } as const
   const storedState = cookieStore.get("github_oauth_state")?.value ?? null
-  const codeVerifier = cookieStore.get("github_code_verifier")?.value ?? null
+  const cookieVerifier = cookieStore.get("github_code_verifier")?.value ?? null
   // Re-sanitized on the way out as well as in: the cookie is httpOnly, but validating a
   // redirect target at exactly the point it becomes a Location header is worth the two lines.
   const returnTo = sanitizeReturnTo(cookieStore.get(RETURN_TO_COOKIE)?.value ?? null)
@@ -54,12 +55,16 @@ export async function GET(request: Request): Promise<Response> {
   cookieStore.delete({ name: "github_code_verifier", ...transientScope })
   cookieStore.delete({ name: RETURN_TO_COOKIE, ...transientScope })
 
-  if (code === null || state === null || storedState === null || codeVerifier === null) {
-    return badRequest(
-      `missing code=${code !== null} state=${state !== null} storedState=${storedState !== null} verifier=${codeVerifier !== null}`,
-    )
+  if (code === null || state === null) {
+    return badRequest(`missing code=${code !== null} state=${state !== null}`)
   }
-  if (!constantTimeEqualUtf8(state, storedState)) {
+  const identityFlow = await consumeIdentityFlow(state)
+  const codeVerifier = identityFlow?.verifier ?? cookieVerifier
+  if (codeVerifier === null) return badRequest("missing PKCE verifier")
+  if (
+    identityFlow === null &&
+    (storedState === null || !constantTimeEqualUtf8(state, storedState))
+  ) {
     return badRequest("state did not match the cookie")
   }
 
@@ -76,6 +81,18 @@ export async function GET(request: Request): Promise<Response> {
     profile = await fetchGitHubUser(tokens.accessToken)
   } catch (cause) {
     return badRequest(`fetching the GitHub profile failed: ${String(cause)}`)
+  }
+
+  if (identityFlow !== null) {
+    return await completeIdentityFlow({
+      flow: identityFlow,
+      provider: PROVIDER,
+      providerAccountId: profile.id,
+      displayIdentity: profile.login,
+      githubLogin: profile.login,
+      tokens,
+      request,
+    })
   }
 
   const existingAccount = await db
@@ -103,6 +120,7 @@ export async function GET(request: Request): Promise<Response> {
     type: "oauth",
     provider: PROVIDER,
     providerAccountId: profile.id,
+    displayIdentity: profile.login,
     accessTokenCiphertext: sealed.ciphertext,
     accessTokenWrappedDek: sealed.wrappedDek,
     accessTokenKmsKeyId: sealed.kmsKeyId,
@@ -125,6 +143,10 @@ export async function GET(request: Request): Promise<Response> {
   } else {
     await crudAccount(db).createAccount(accountValues)
   }
+  await crudUser(db).updateGithubIdentity(userId, {
+    githubLogin: profile.login,
+    githubUserId: BigInt(profile.id),
+  })
 
   // Every user belongs to an organization, so the first sign-in creates
   // "<Name>'s Team". Idempotent and cheap on every later sign-in — an existing

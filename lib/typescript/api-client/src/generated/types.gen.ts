@@ -4560,6 +4560,7 @@ export type GetV1OrgsByOrgSlugDomainsResponses = {
         slug: string
       }
       hostname: string
+      domainKind: "ordinary" | "managed"
       status:
         | "pending_dns"
         | "issuing"
@@ -4577,9 +4578,10 @@ export type GetV1OrgsByOrgSlugDomainsResponses = {
       createdAt: Date
       instructions: {
         verification: {
+          required: boolean
           type: "TXT"
-          name: string
-          value: string
+          name: string | null
+          value: string | null
         }
         traffic: Array<{
           type: "A" | "AAAA" | "CNAME" | "ALIAS" | "ANAME"
@@ -4618,6 +4620,7 @@ export type GetV1OrgsByOrgSlugProjectsByProjectIdDomainsResponses = {
         slug: string
       }
       hostname: string
+      domainKind: "ordinary" | "managed"
       status:
         | "pending_dns"
         | "issuing"
@@ -4635,9 +4638,10 @@ export type GetV1OrgsByOrgSlugProjectsByProjectIdDomainsResponses = {
       createdAt: Date
       instructions: {
         verification: {
+          required: boolean
           type: "TXT"
-          name: string
-          value: string
+          name: string | null
+          value: string | null
         }
         traffic: Array<{
           type: "A" | "AAAA" | "CNAME" | "ALIAS" | "ANAME"
@@ -4691,6 +4695,7 @@ export type PostV1OrgsByOrgSlugProjectsByProjectIdDomainsResponses = {
       slug: string
     }
     hostname: string
+    domainKind: "ordinary" | "managed"
     status:
       | "pending_dns"
       | "issuing"
@@ -4708,9 +4713,10 @@ export type PostV1OrgsByOrgSlugProjectsByProjectIdDomainsResponses = {
     createdAt: Date
     instructions: {
       verification: {
+        required: boolean
         type: "TXT"
-        name: string
-        value: string
+        name: string | null
+        value: string | null
       }
       traffic: Array<{
         type: "A" | "AAAA" | "CNAME" | "ALIAS" | "ANAME"
@@ -4758,6 +4764,7 @@ export type PostV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdCheckResponse
       slug: string
     }
     hostname: string
+    domainKind: "ordinary" | "managed"
     status:
       | "pending_dns"
       | "issuing"
@@ -4775,9 +4782,10 @@ export type PostV1OrgsByOrgSlugProjectsByProjectIdDomainsByDomainIdCheckResponse
     createdAt: Date
     instructions: {
       verification: {
+        required: boolean
         type: "TXT"
-        name: string
-        value: string
+        name: string | null
+        value: string | null
       }
       traffic: Array<{
         type: "A" | "AAAA" | "CNAME" | "ALIAS" | "ANAME"
@@ -7359,6 +7367,119 @@ export type DeleteV1UserMeDeleteResponses = {
 export type DeleteV1UserMeDeleteResponse =
   DeleteV1UserMeDeleteResponses[keyof DeleteV1UserMeDeleteResponses]
 
+export type GetV1UserSignInMethodsData = {
+  body?: never
+  path?: never
+  query?: never
+  url: "/v1/user/sign-in-methods"
+}
+
+export type GetV1UserSignInMethodsResponses = {
+  /**
+   * Sign-in methods
+   */
+  200: {
+    data: Array<{
+      id: string
+      provider: "google" | "github"
+      displayIdentity: string
+      connectedAt: Date
+      repositoryAccessNeedsReauthorization: boolean
+      canUnlink: boolean
+    }>
+  }
+}
+
+export type GetV1UserSignInMethodsResponse =
+  GetV1UserSignInMethodsResponses[keyof GetV1UserSignInMethodsResponses]
+
+export type PostV1UserSignInMethodsAuthorizeData = {
+  body?: {
+    provider: "google" | "github"
+    intent: "link" | "reauthorize"
+    methodId?: string
+    returnTo: string
+  }
+  path?: never
+  query?: never
+  url: "/v1/user/sign-in-methods/authorize"
+}
+
+export type PostV1UserSignInMethodsAuthorizeErrors = {
+  /**
+   * A browser session is required
+   */
+  401: ErrorResponseT
+  /**
+   * Recent reauthentication is required
+   */
+  403: ErrorResponseT
+  /**
+   * Sign-in method not found
+   */
+  404: ErrorResponseT
+}
+
+export type PostV1UserSignInMethodsAuthorizeError =
+  PostV1UserSignInMethodsAuthorizeErrors[keyof PostV1UserSignInMethodsAuthorizeErrors]
+
+export type PostV1UserSignInMethodsAuthorizeResponses = {
+  /**
+   * Provider authorization URL
+   */
+  200: {
+    authorizationUrl: string
+  }
+}
+
+export type PostV1UserSignInMethodsAuthorizeResponse =
+  PostV1UserSignInMethodsAuthorizeResponses[keyof PostV1UserSignInMethodsAuthorizeResponses]
+
+export type DeleteV1UserSignInMethodsByMethodIdData = {
+  body?: {
+    confirmation: "UNLINK"
+  }
+  path: {
+    methodId: string
+  }
+  query?: never
+  url: "/v1/user/sign-in-methods/{methodId}"
+}
+
+export type DeleteV1UserSignInMethodsByMethodIdErrors = {
+  /**
+   * A browser session is required
+   */
+  401: ErrorResponseT
+  /**
+   * Recent reauthentication is required
+   */
+  403: ErrorResponseT
+  /**
+   * Sign-in method not found
+   */
+  404: ErrorResponseT
+  /**
+   * The method is currently required
+   */
+  409: ErrorResponseT
+}
+
+export type DeleteV1UserSignInMethodsByMethodIdError =
+  DeleteV1UserSignInMethodsByMethodIdErrors[keyof DeleteV1UserSignInMethodsByMethodIdErrors]
+
+export type DeleteV1UserSignInMethodsByMethodIdResponses = {
+  /**
+   * Method unlinked
+   */
+  200: {
+    [key: string]: unknown
+  }
+}
+
+export type DeleteV1UserSignInMethodsByMethodIdResponse =
+  DeleteV1UserSignInMethodsByMethodIdResponses[keyof DeleteV1UserSignInMethodsByMethodIdResponses]
+
 export type PostV1WebhooksGithubData = {
   body?: never
   path?: never
@@ -7461,6 +7582,39 @@ export type PostV1OauthConsentResponses = {
 
 export type PostV1OauthConsentResponse =
   PostV1OauthConsentResponses[keyof PostV1OauthConsentResponses]
+
+export type GetV1OauthUserinfoData = {
+  body?: never
+  path?: never
+  query?: never
+  url: "/v1/oauth/userinfo"
+}
+
+export type GetV1OauthUserinfoErrors = {
+  /**
+   * A valid OAuth bearer token is required
+   */
+  401: {
+    error: string
+    error_description: string
+  }
+}
+
+export type GetV1OauthUserinfoError = GetV1OauthUserinfoErrors[keyof GetV1OauthUserinfoErrors]
+
+export type GetV1OauthUserinfoResponses = {
+  /**
+   * Claims for the token subject
+   */
+  200: {
+    sub: string
+    github_user_id?: string
+    github_login?: string
+  }
+}
+
+export type GetV1OauthUserinfoResponse =
+  GetV1OauthUserinfoResponses[keyof GetV1OauthUserinfoResponses]
 
 export type PostV1OauthTokenData = {
   body?: {
@@ -8075,114 +8229,3 @@ export type GetV1AndroidCatalogueResponses = {
    */
   200: unknown
 }
-
-export type PostAdminStoreListingsByListingIdAndroidReleaseData = {
-  body?: {
-    androidAppId: string | null
-  }
-  path: {
-    listingId: string
-  }
-  query?: never
-  url: "/admin/store/listings/{listingId}/android-release"
-}
-
-export type PostAdminStoreListingsByListingIdAndroidReleaseErrors = {
-  /**
-   * Listing or release is not publishable
-   */
-  400: ErrorResponseT
-  /**
-   * Caller is not a platform admin
-   */
-  403: ErrorResponseT
-  /**
-   * No such listing
-   */
-  404: ErrorResponseT
-}
-
-export type PostAdminStoreListingsByListingIdAndroidReleaseError =
-  PostAdminStoreListingsByListingIdAndroidReleaseErrors[keyof PostAdminStoreListingsByListingIdAndroidReleaseErrors]
-
-export type PostAdminStoreListingsByListingIdAndroidReleaseResponses = {
-  /**
-   * The canonical Android release, or null when removed
-   */
-  200: {
-    androidAppId: string | null
-  }
-}
-
-export type PostAdminStoreListingsByListingIdAndroidReleaseResponse =
-  PostAdminStoreListingsByListingIdAndroidReleaseResponses[keyof PostAdminStoreListingsByListingIdAndroidReleaseResponses]
-
-export type GetAdminUsersData = {
-  body?: never
-  path?: never
-  query?: {
-    q?: string
-    limit?: number
-    cursor?: string
-  }
-  url: "/admin/users"
-}
-
-export type GetAdminUsersResponses = {
-  /**
-   * Users
-   */
-  200: {
-    items: Array<{
-      id: string
-      email: string
-      name: string | null
-      githubLogin: string | null
-      isAdmin: boolean
-      deletedAt: Date | null
-      organizationCount: number
-      createdAt: Date
-    }>
-    nextCursor: string | null
-  }
-}
-
-export type GetAdminUsersResponse = GetAdminUsersResponses[keyof GetAdminUsersResponses]
-
-export type PostAdminUsersImpersonateData = {
-  body?: {
-    userId: string
-    reason: string
-  }
-  path?: never
-  query?: never
-  url: "/admin/users/impersonate"
-}
-
-export type PostAdminUsersImpersonateErrors = {
-  /**
-   * The target cannot be impersonated
-   */
-  400: ErrorResponseT
-  /**
-   * No such user
-   */
-  404: ErrorResponseT
-}
-
-export type PostAdminUsersImpersonateError =
-  PostAdminUsersImpersonateErrors[keyof PostAdminUsersImpersonateErrors]
-
-export type PostAdminUsersImpersonateResponses = {
-  /**
-   * The session cookie is now the target user's
-   */
-  200: {
-    userId: string
-    email: string
-    expiresAt: Date
-  }
-}
-
-export type PostAdminUsersImpersonateResponse =
-  PostAdminUsersImpersonateResponses[keyof PostAdminUsersImpersonateResponses]

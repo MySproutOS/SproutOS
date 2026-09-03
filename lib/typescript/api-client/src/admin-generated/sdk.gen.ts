@@ -3,12 +3,33 @@
 import type { Client, ClientMeta, Options as Options2, RequestResult, TDataShape } from "./client"
 import { client } from "./client.gen"
 import {
+  getAdminManagedDomainPoliciesByPolicyIdResponseTransformer,
+  getAdminManagedDomainPoliciesResponseTransformer,
   getAdminUsersResponseTransformer,
+  patchAdminManagedDomainPoliciesByPolicyIdResponseTransformer,
+  postAdminManagedDomainPoliciesResponseTransformer,
   postAdminUsersImpersonateResponseTransformer,
 } from "./transformers.gen"
 import type {
+  DeleteAdminManagedDomainPoliciesByPolicyIdData,
+  DeleteAdminManagedDomainPoliciesByPolicyIdErrors,
+  DeleteAdminManagedDomainPoliciesByPolicyIdResponses,
+  GetAdminManagedDomainPoliciesByPolicyIdData,
+  GetAdminManagedDomainPoliciesByPolicyIdErrors,
+  GetAdminManagedDomainPoliciesByPolicyIdResponses,
+  GetAdminManagedDomainPoliciesData,
+  GetAdminManagedDomainPoliciesResponses,
   GetAdminUsersData,
   GetAdminUsersResponses,
+  PatchAdminManagedDomainPoliciesByPolicyIdData,
+  PatchAdminManagedDomainPoliciesByPolicyIdErrors,
+  PatchAdminManagedDomainPoliciesByPolicyIdResponses,
+  PostAdminManagedDomainPoliciesData,
+  PostAdminManagedDomainPoliciesErrors,
+  PostAdminManagedDomainPoliciesResponses,
+  PostAdminStoreListingsByListingIdAndroidReleaseData,
+  PostAdminStoreListingsByListingIdAndroidReleaseErrors,
+  PostAdminStoreListingsByListingIdAndroidReleaseResponses,
   PostAdminUsersImpersonateData,
   PostAdminUsersImpersonateErrors,
   PostAdminUsersImpersonateResponses,
@@ -31,6 +52,127 @@ export type Options<
    */
   meta?: keyof ClientMeta extends never ? Record<string, unknown> : ClientMeta
 }
+
+/**
+ * Selects the exact signed Android release published by a global listing
+ */
+export const postAdminStoreListingsByListingIdAndroidRelease = <
+  ThrowOnError extends boolean = false,
+>(
+  options: Options<PostAdminStoreListingsByListingIdAndroidReleaseData, ThrowOnError>,
+): RequestResult<
+  PostAdminStoreListingsByListingIdAndroidReleaseResponses,
+  PostAdminStoreListingsByListingIdAndroidReleaseErrors,
+  ThrowOnError
+> =>
+  (options.client ?? client).post<
+    PostAdminStoreListingsByListingIdAndroidReleaseResponses,
+    PostAdminStoreListingsByListingIdAndroidReleaseErrors,
+    ThrowOnError
+  >({
+    url: "/admin/store/listings/{listingId}/android-release",
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options.headers,
+    },
+  })
+
+/**
+ * Lists managed custom-domain policies
+ */
+export const getAdminManagedDomainPolicies = <ThrowOnError extends boolean = false>(
+  options?: Options<GetAdminManagedDomainPoliciesData, ThrowOnError>,
+): RequestResult<GetAdminManagedDomainPoliciesResponses, unknown, ThrowOnError> =>
+  (options?.client ?? client).get<GetAdminManagedDomainPoliciesResponses, unknown, ThrowOnError>({
+    responseTransformer: getAdminManagedDomainPoliciesResponseTransformer,
+    url: "/admin/managed-domain-policies",
+    ...options,
+  })
+
+/**
+ * Creates an organization-bound managed domain suffix
+ */
+export const postAdminManagedDomainPolicies = <ThrowOnError extends boolean = false>(
+  options?: Options<PostAdminManagedDomainPoliciesData, ThrowOnError>,
+): RequestResult<
+  PostAdminManagedDomainPoliciesResponses,
+  PostAdminManagedDomainPoliciesErrors,
+  ThrowOnError
+> =>
+  (options?.client ?? client).post<
+    PostAdminManagedDomainPoliciesResponses,
+    PostAdminManagedDomainPoliciesErrors,
+    ThrowOnError
+  >({
+    responseTransformer: postAdminManagedDomainPoliciesResponseTransformer,
+    url: "/admin/managed-domain-policies",
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options?.headers,
+    },
+  })
+
+/**
+ * Soft-deletes a managed policy and tears down attached domains
+ */
+export const deleteAdminManagedDomainPoliciesByPolicyId = <ThrowOnError extends boolean = false>(
+  options: Options<DeleteAdminManagedDomainPoliciesByPolicyIdData, ThrowOnError>,
+): RequestResult<
+  DeleteAdminManagedDomainPoliciesByPolicyIdResponses,
+  DeleteAdminManagedDomainPoliciesByPolicyIdErrors,
+  ThrowOnError
+> =>
+  (options.client ?? client).delete<
+    DeleteAdminManagedDomainPoliciesByPolicyIdResponses,
+    DeleteAdminManagedDomainPoliciesByPolicyIdErrors,
+    ThrowOnError
+  >({ url: "/admin/managed-domain-policies/{policyId}", ...options })
+
+/**
+ * Gets one managed custom-domain policy
+ */
+export const getAdminManagedDomainPoliciesByPolicyId = <ThrowOnError extends boolean = false>(
+  options: Options<GetAdminManagedDomainPoliciesByPolicyIdData, ThrowOnError>,
+): RequestResult<
+  GetAdminManagedDomainPoliciesByPolicyIdResponses,
+  GetAdminManagedDomainPoliciesByPolicyIdErrors,
+  ThrowOnError
+> =>
+  (options.client ?? client).get<
+    GetAdminManagedDomainPoliciesByPolicyIdResponses,
+    GetAdminManagedDomainPoliciesByPolicyIdErrors,
+    ThrowOnError
+  >({
+    responseTransformer: getAdminManagedDomainPoliciesByPolicyIdResponseTransformer,
+    url: "/admin/managed-domain-policies/{policyId}",
+    ...options,
+  })
+
+/**
+ * Updates or disables a managed domain policy
+ */
+export const patchAdminManagedDomainPoliciesByPolicyId = <ThrowOnError extends boolean = false>(
+  options: Options<PatchAdminManagedDomainPoliciesByPolicyIdData, ThrowOnError>,
+): RequestResult<
+  PatchAdminManagedDomainPoliciesByPolicyIdResponses,
+  PatchAdminManagedDomainPoliciesByPolicyIdErrors,
+  ThrowOnError
+> =>
+  (options.client ?? client).patch<
+    PatchAdminManagedDomainPoliciesByPolicyIdResponses,
+    PatchAdminManagedDomainPoliciesByPolicyIdErrors,
+    ThrowOnError
+  >({
+    responseTransformer: patchAdminManagedDomainPoliciesByPolicyIdResponseTransformer,
+    url: "/admin/managed-domain-policies/{policyId}",
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options.headers,
+    },
+  })
 
 /**
  * Find a user across every organization

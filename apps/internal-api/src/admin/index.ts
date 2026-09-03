@@ -2,6 +2,7 @@ import { Hono } from "hono"
 import { RegExpRouter } from "hono/router/reg-exp-router"
 import users from "./users"
 import store from "./store"
+import managedDomainPolicies from "./managed-domain-policies"
 
 /**
  * The platform surface.
@@ -16,6 +17,7 @@ const app = new Hono({
 })
   .basePath("/admin")
   .route("/store", store)
+  .route("/managed-domain-policies", managedDomainPolicies)
   .route("/users", users)
 
 export default app

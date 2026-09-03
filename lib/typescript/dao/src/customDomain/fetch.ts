@@ -6,6 +6,7 @@ export const CUSTOM_DOMAIN_FIELDS = [
   "organizationId",
   "projectId",
   "hostname",
+  "managedDomainPolicyId",
   "isApex",
   "verificationToken",
   "verifiedAt",

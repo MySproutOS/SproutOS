@@ -1,4 +1,5 @@
 import { crudAccount } from "./account/crud"
+import { fetchAccount, SAFE_ACCOUNT_FIELDS } from "./account/fetch"
 import { type AuditEntry, crudAuditLog } from "./auditLog/crud"
 import { crudBackgroundJob } from "./backgroundJob/crud"
 import { fetchBackgroundJob } from "./backgroundJob/fetch"
@@ -140,6 +141,10 @@ import { crudUserPreference } from "./userPreference/crud"
 import { fetchUserPreference } from "./userPreference/fetch"
 import { crudCustomDomain } from "./customDomain/crud"
 import { CUSTOM_DOMAIN_FIELDS, fetchCustomDomain } from "./customDomain/fetch"
+import { crudOauthIdentityFlow } from "./oauthIdentityFlow/crud"
+import { fetchOauthIdentityFlow } from "./oauthIdentityFlow/fetch"
+import { crudManagedCustomDomainPolicy } from "./managedCustomDomainPolicy/crud"
+import { fetchManagedCustomDomainPolicy } from "./managedCustomDomainPolicy/fetch"
 import { crudPlatformEdgeCertificate } from "./platformEdgeCertificate/crud"
 import { fetchPlatformEdgeCertificate } from "./platformEdgeCertificate/fetch"
 import {
@@ -192,6 +197,12 @@ export {
   fetchAgentProxyToken,
   crudAgentSession,
   crudAccount,
+  fetchAccount,
+  SAFE_ACCOUNT_FIELDS,
+  crudOauthIdentityFlow,
+  fetchOauthIdentityFlow,
+  crudManagedCustomDomainPolicy,
+  fetchManagedCustomDomainPolicy,
   crudAuditLog,
   crudBackgroundJob,
   crudCustomDomain,

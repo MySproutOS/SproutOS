@@ -1,6 +1,12 @@
 import { GetSecretValueCommand, SecretsManagerClient } from "@aws-sdk/client-secrets-manager"
 import { PutObjectCommand, S3Client } from "@aws-sdk/client-s3"
-import { crudCustomDomain, fetchCustomDomain, fetchDeployment, fetchProject } from "@lib/dao"
+import {
+  crudCustomDomain,
+  fetchCustomDomain,
+  fetchDeployment,
+  fetchManagedCustomDomainPolicy,
+  fetchProject,
+} from "@lib/dao"
 import type { DB } from "@sproutos/db"
 import {
   lambdaAliasArn,
@@ -193,6 +199,28 @@ export async function trafficPointsToIngress(
     addresses(resolver, ingressHostname),
   ])
   return expected.size > 0 && [...actual].some((address) => expected.has(address))
+}
+
+async function managedPolicyOwnsDomain(
+  db: Kysely<DB>,
+  domain: { managedDomainPolicyId: string | null; hostname: string; organizationId: string },
+): Promise<boolean> {
+  if (domain.managedDomainPolicyId === null) return false
+  const policy = await fetchManagedCustomDomainPolicy(db).getOne(domain.managedDomainPolicyId, [
+    "organizationId",
+    "status",
+    "suffix",
+  ])
+  if (
+    policy === undefined ||
+    policy.status !== "active" ||
+    policy.organizationId !== domain.organizationId
+  ) {
+    return false
+  }
+  const labels = domain.hostname.split(".")
+  const suffixLabels = policy.suffix.split(".")
+  return labels.length === suffixLabels.length + 1 && domain.hostname.endsWith(`.${policy.suffix}`)
 }
 
 async function accountKey(deps: Dependencies): Promise<string> {
@@ -420,6 +448,17 @@ export function reconcileCustomDomain(options?: Partial<Dependencies>): JobHandl
         return
       }
 
+      const managedOwnership = await managedPolicyOwnsDomain(db, domain)
+      if (domain.managedDomainPolicyId !== null && !managedOwnership) {
+        await updateOwned({
+          status: "deleting",
+          statusReason: "The managed-domain policy is no longer active for this organization.",
+          nextRetryAt: deps.now(),
+          consecutiveFailures: 0,
+        })
+        return
+      }
+
       if (domain.verifiedAt === null && domain.claimExpiresAt <= deps.now()) {
         await deps.valkey.del(`custom-domain:pending:${domain.hostname}`)
         await updateOwned({
@@ -595,12 +634,14 @@ export function reconcileCustomDomain(options?: Partial<Dependencies>): JobHandl
         // both records again while continuing to serve the already-issued certificate.
         if (!renewalDueNow && manualDnsCheckRequested) {
           const [ownsHostname, pointsToIngress] = await Promise.all([
-            hasOwnershipTxtCached(
-              deps.resolver,
-              deps.valkey,
-              domain.hostname,
-              domain.verificationToken,
-            ),
+            managedOwnership
+              ? Promise.resolve(true)
+              : hasOwnershipTxtCached(
+                  deps.resolver,
+                  deps.valkey,
+                  domain.hostname,
+                  domain.verificationToken,
+                ),
             trafficPointsToIngress(
               deps.resolver,
               domain.hostname,
@@ -629,12 +670,14 @@ export function reconcileCustomDomain(options?: Partial<Dependencies>): JobHandl
       }
       if (!renewing) {
         const [ownsHostname, pointsToIngress] = await Promise.all([
-          hasOwnershipTxtCached(
-            deps.resolver,
-            deps.valkey,
-            domain.hostname,
-            domain.verificationToken,
-          ),
+          managedOwnership
+            ? Promise.resolve(true)
+            : hasOwnershipTxtCached(
+                deps.resolver,
+                deps.valkey,
+                domain.hostname,
+                domain.verificationToken,
+              ),
           trafficPointsToIngress(
             deps.resolver,
             domain.hostname,

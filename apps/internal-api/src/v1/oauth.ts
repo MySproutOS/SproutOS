@@ -1,4 +1,4 @@
-import { crudAuditLog } from "@lib/dao"
+import { crudAuditLog, fetchAccount } from "@lib/dao"
 import {
   assertRegisteredRedirect,
   createAuthorizationCode,
@@ -18,7 +18,6 @@ import { resolver } from "hono-typebox-openapi/typebox"
 import { validator } from "../utils/validator"
 import { validate as validateUUID, v7 } from "uuid"
 import { authMiddleware } from "../middleware"
-import { ACTIONS, isGrantableAction } from "../rbac"
 import { auditContext } from "../utils/request-context"
 import {
   oauthSchemaConsentRequest,
@@ -30,15 +29,15 @@ import {
   oauthSchemaRevokeRequest,
   oauthSchemaTokenRequest,
   oauthSchemaTokenResponse,
+  oauthSchemaUserinfoResponse,
 } from "./oauth.serializer"
+import { isOauthScope, OAUTH_SCOPES } from "./oauth-scopes"
 
 /**
  * SproutOS as an OAuth 2.1 authorization server (TASK 6).
  *
- * **Scopes are the RBAC action catalogue**, not a second vocabulary. A token's effective
- * permission is the intersection of what the user can do and what they granted the client, so a
- * scope that is not an action could never be granted by anyone — and inventing a parallel
- * vocabulary means two lists that drift and one of them being wrong.
+ * Resource scopes are the RBAC action catalogue. Identity scopes are intentionally separate:
+ * they control claims returned by userinfo and grant no control-plane permission.
  */
 
 function issuer(): string {
@@ -102,7 +101,8 @@ const app = new Hono()
         token_endpoint: `${api}/v1/oauth/token`,
         introspection_endpoint: `${api}/v1/oauth/introspect`,
         revocation_endpoint: `${api}/v1/oauth/revoke`,
-        scopes_supported: [...ACTIONS],
+        userinfo_endpoint: `${api}/v1/oauth/userinfo`,
+        scopes_supported: [...OAUTH_SCOPES],
         // OAuth 2.1: the implicit grant is gone, so `token` is not a response type we offer.
         response_types_supported: ["code"],
         grant_types_supported: ["authorization_code", "refresh_token"],
@@ -176,7 +176,7 @@ const app = new Hono()
 
         // A person can only grant what they themselves hold. Checked here rather than at the
         // resource server alone, so a grant never records a permission the user never had.
-        const unknown = body.scopes.filter((scope) => !isGrantableAction(scope))
+        const unknown = body.scopes.filter((scope) => !isOauthScope(scope))
         if (unknown.length > 0) {
           throw new OAuthError("invalid_scope", `Not a known scope: ${unknown.join(", ")}`)
         }
@@ -244,6 +244,51 @@ const app = new Hono()
       } catch (error) {
         return oauthError(c, error)
       }
+    },
+  )
+  .get(
+    "/userinfo",
+    describeRoute({
+      description: "OpenID-style claims authorized by the OAuth token's identity scopes",
+      responses: {
+        200: {
+          description: "Claims for the token subject",
+          content: { "application/json": { schema: resolver(oauthSchemaUserinfoResponse) } },
+        },
+        401: {
+          description: "A valid OAuth bearer token is required",
+          content: { "application/json": { schema: resolver(oauthSchemaErrorResponse) } },
+        },
+      },
+    }),
+    authMiddleware,
+    async (c) => {
+      if (c.var.auth.kind !== "oauth") {
+        c.header("WWW-Authenticate", 'Bearer error="invalid_token"')
+        return c.json(
+          { error: "invalid_token", error_description: "An OAuth bearer token is required" },
+          401,
+        )
+      }
+
+      const response: {
+        sub: string
+        github_user_id?: string
+        github_login?: string
+      } = { sub: c.var.user.id }
+
+      if (c.var.auth.scopes.includes("github:identity")) {
+        const github = await fetchAccount(db).newestGithubIdentity(c.var.user.id, [
+          "providerAccountId",
+          "displayIdentity",
+        ])
+        if (github !== undefined && github.displayIdentity !== null) {
+          response.github_user_id = github.providerAccountId
+          response.github_login = github.displayIdentity
+        }
+      }
+
+      return c.json(response)
     },
   )
   .post(

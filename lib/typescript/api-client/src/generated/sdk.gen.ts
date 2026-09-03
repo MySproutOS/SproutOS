@@ -11,7 +11,6 @@ import {
 import { client } from "./client.gen"
 import {
   deleteV1OrgsByOrgSlugProjectsByProjectIdResponseTransformer,
-  getAdminUsersResponseTransformer,
   getV1OrgsByOrgSlugAgentCredentialsResponseTransformer,
   getV1OrgsByOrgSlugAnalysesByAnalysisIdResponseTransformer,
   getV1OrgsByOrgSlugAnalysesResponseTransformer,
@@ -56,12 +55,12 @@ import {
   getV1UserMeExportResponseTransformer,
   getV1UserMeImpersonationResponseTransformer,
   getV1UserMeProfileResponseTransformer,
+  getV1UserSignInMethodsResponseTransformer,
   patchV1OrgsByOrgSlugAgentCredentialsByCredentialIdResponseTransformer,
   patchV1OrgsByOrgSlugProjectsByProjectIdResponseTransformer,
   patchV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsByRunIdJobResponseTransformer,
   patchV1OrgsByOrgSlugResponseTransformer,
   patchV1UserMeProfileResponseTransformer,
-  postAdminUsersImpersonateResponseTransformer,
   postV1AuthCliTokenResponseTransformer,
   postV1OrgsByOrgSlugAgentCredentialsResponseTransformer,
   postV1OrgsByOrgSlugAgentProxyTokenRefreshResponseTransformer,
@@ -143,8 +142,9 @@ import type {
   DeleteV1UserMeImpersonationData,
   DeleteV1UserMeImpersonationErrors,
   DeleteV1UserMeImpersonationResponses,
-  GetAdminUsersData,
-  GetAdminUsersResponses,
+  DeleteV1UserSignInMethodsByMethodIdData,
+  DeleteV1UserSignInMethodsByMethodIdErrors,
+  DeleteV1UserSignInMethodsByMethodIdResponses,
   GetV1AndroidCatalogueData,
   GetV1AndroidCatalogueResponses,
   GetV1AndroidClientReleaseData,
@@ -155,6 +155,9 @@ import type {
   GetV1DeployDeploymentsByDeploymentIdData,
   GetV1DeployDeploymentsByDeploymentIdErrors,
   GetV1DeployDeploymentsByDeploymentIdResponses,
+  GetV1OauthUserinfoData,
+  GetV1OauthUserinfoErrors,
+  GetV1OauthUserinfoResponses,
   GetV1OrgsByOrgSlugAgentConfigData,
   GetV1OrgsByOrgSlugAgentConfigErrors,
   GetV1OrgsByOrgSlugAgentConfigResponses,
@@ -354,6 +357,8 @@ import type {
   GetV1UserMePreferencesResponses,
   GetV1UserMeProfileData,
   GetV1UserMeProfileResponses,
+  GetV1UserSignInMethodsData,
+  GetV1UserSignInMethodsResponses,
   PatchV1OrgsByOrgSlugAgentCredentialsByCredentialIdData,
   PatchV1OrgsByOrgSlugAgentCredentialsByCredentialIdErrors,
   PatchV1OrgsByOrgSlugAgentCredentialsByCredentialIdResponses,
@@ -377,12 +382,6 @@ import type {
   PatchV1UserMeProfileData,
   PatchV1UserMeProfileErrors,
   PatchV1UserMeProfileResponses,
-  PostAdminStoreListingsByListingIdAndroidReleaseData,
-  PostAdminStoreListingsByListingIdAndroidReleaseErrors,
-  PostAdminStoreListingsByListingIdAndroidReleaseResponses,
-  PostAdminUsersImpersonateData,
-  PostAdminUsersImpersonateErrors,
-  PostAdminUsersImpersonateResponses,
   PostV1ApkSigningCompleteData,
   PostV1ApkSigningCompleteErrors,
   PostV1ApkSigningCompleteResponses,
@@ -572,6 +571,9 @@ import type {
   PostV1TemplatesResolveData,
   PostV1TemplatesResolveErrors,
   PostV1TemplatesResolveResponses,
+  PostV1UserSignInMethodsAuthorizeData,
+  PostV1UserSignInMethodsAuthorizeErrors,
+  PostV1UserSignInMethodsAuthorizeResponses,
   PostV1WebhooksGithubData,
   PostV1WebhooksGithubErrors,
   PostV1WebhooksGithubResponses,
@@ -3679,6 +3681,64 @@ export const deleteV1UserMeDelete = <ThrowOnError extends boolean = false>(
   >({ url: "/v1/user/me/delete", ...options })
 
 /**
+ * Lists the current user's Google and GitHub sign-in methods
+ */
+export const getV1UserSignInMethods = <ThrowOnError extends boolean = false>(
+  options?: Options<GetV1UserSignInMethodsData, ThrowOnError>,
+): RequestResult<GetV1UserSignInMethodsResponses, unknown, ThrowOnError> =>
+  (options?.client ?? client).get<GetV1UserSignInMethodsResponses, unknown, ThrowOnError>({
+    responseTransformer: getV1UserSignInMethodsResponseTransformer,
+    url: "/v1/user/sign-in-methods",
+    ...options,
+  })
+
+/**
+ * Begins a session-bound sign-in identity link or reauthorization
+ */
+export const postV1UserSignInMethodsAuthorize = <ThrowOnError extends boolean = false>(
+  options?: Options<PostV1UserSignInMethodsAuthorizeData, ThrowOnError>,
+): RequestResult<
+  PostV1UserSignInMethodsAuthorizeResponses,
+  PostV1UserSignInMethodsAuthorizeErrors,
+  ThrowOnError
+> =>
+  (options?.client ?? client).post<
+    PostV1UserSignInMethodsAuthorizeResponses,
+    PostV1UserSignInMethodsAuthorizeErrors,
+    ThrowOnError
+  >({
+    url: "/v1/user/sign-in-methods/authorize",
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options?.headers,
+    },
+  })
+
+/**
+ * Unlinks one sign-in method after explicit confirmation
+ */
+export const deleteV1UserSignInMethodsByMethodId = <ThrowOnError extends boolean = false>(
+  options: Options<DeleteV1UserSignInMethodsByMethodIdData, ThrowOnError>,
+): RequestResult<
+  DeleteV1UserSignInMethodsByMethodIdResponses,
+  DeleteV1UserSignInMethodsByMethodIdErrors,
+  ThrowOnError
+> =>
+  (options.client ?? client).delete<
+    DeleteV1UserSignInMethodsByMethodIdResponses,
+    DeleteV1UserSignInMethodsByMethodIdErrors,
+    ThrowOnError
+  >({
+    url: "/v1/user/sign-in-methods/{methodId}",
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options.headers,
+    },
+  })
+
+/**
  * Receives every GitHub App webhook delivery
  */
 export const postV1WebhooksGithub = <ThrowOnError extends boolean = false>(
@@ -3720,6 +3780,18 @@ export const postV1OauthConsent = <ThrowOnError extends boolean = false>(
       ...options?.headers,
     },
   })
+
+/**
+ * OpenID-style claims authorized by the OAuth token's identity scopes
+ */
+export const getV1OauthUserinfo = <ThrowOnError extends boolean = false>(
+  options?: Options<GetV1OauthUserinfoData, ThrowOnError>,
+): RequestResult<GetV1OauthUserinfoResponses, GetV1OauthUserinfoErrors, ThrowOnError> =>
+  (options?.client ?? client).get<
+    GetV1OauthUserinfoResponses,
+    GetV1OauthUserinfoErrors,
+    ThrowOnError
+  >({ url: "/v1/oauth/userinfo", ...options })
 
 /**
  * RFC 6749 token endpoint: authorization_code and refresh_token grants
@@ -4036,65 +4108,4 @@ export const getV1AndroidCatalogue = <ThrowOnError extends boolean = false>(
   (options?.client ?? client).get<GetV1AndroidCatalogueResponses, unknown, ThrowOnError>({
     url: "/v1/android/catalogue",
     ...options,
-  })
-
-/**
- * Selects the exact signed Android release published by a global listing
- */
-export const postAdminStoreListingsByListingIdAndroidRelease = <
-  ThrowOnError extends boolean = false,
->(
-  options: Options<PostAdminStoreListingsByListingIdAndroidReleaseData, ThrowOnError>,
-): RequestResult<
-  PostAdminStoreListingsByListingIdAndroidReleaseResponses,
-  PostAdminStoreListingsByListingIdAndroidReleaseErrors,
-  ThrowOnError
-> =>
-  (options.client ?? client).post<
-    PostAdminStoreListingsByListingIdAndroidReleaseResponses,
-    PostAdminStoreListingsByListingIdAndroidReleaseErrors,
-    ThrowOnError
-  >({
-    url: "/admin/store/listings/{listingId}/android-release",
-    ...options,
-    headers: {
-      "Content-Type": "application/json",
-      ...options.headers,
-    },
-  })
-
-/**
- * Find a user across every organization
- */
-export const getAdminUsers = <ThrowOnError extends boolean = false>(
-  options?: Options<GetAdminUsersData, ThrowOnError>,
-): RequestResult<GetAdminUsersResponses, unknown, ThrowOnError> =>
-  (options?.client ?? client).get<GetAdminUsersResponses, unknown, ThrowOnError>({
-    responseTransformer: getAdminUsersResponseTransformer,
-    url: "/admin/users",
-    ...options,
-  })
-
-/**
- * Sign in as a user, for support. Recorded against both people.
- */
-export const postAdminUsersImpersonate = <ThrowOnError extends boolean = false>(
-  options?: Options<PostAdminUsersImpersonateData, ThrowOnError>,
-): RequestResult<
-  PostAdminUsersImpersonateResponses,
-  PostAdminUsersImpersonateErrors,
-  ThrowOnError
-> =>
-  (options?.client ?? client).post<
-    PostAdminUsersImpersonateResponses,
-    PostAdminUsersImpersonateErrors,
-    ThrowOnError
-  >({
-    responseTransformer: postAdminUsersImpersonateResponseTransformer,
-    url: "/admin/users/impersonate",
-    ...options,
-    headers: {
-      "Content-Type": "application/json",
-      ...options?.headers,
-    },
   })

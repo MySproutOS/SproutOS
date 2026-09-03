@@ -38,6 +38,7 @@ const customDomainEntry = Type.Object({
   id: UUID7String,
   project: Type.Object({ id: UUID7String, name: Type.String(), slug: Type.String() }),
   hostname: Type.String(),
+  domainKind: Type.Union([Type.Literal("ordinary"), Type.Literal("managed")]),
   status: domainStatus,
   statusReason: Nullable(Type.String()),
   isApex: Type.Boolean(),
@@ -48,9 +49,10 @@ const customDomainEntry = Type.Object({
   createdAt: Type.String({ format: "date-time" }),
   instructions: Type.Object({
     verification: Type.Object({
+      required: Type.Boolean(),
       type: Type.Literal("TXT"),
-      name: Type.String(),
-      value: Type.String(),
+      name: Nullable(Type.String()),
+      value: Nullable(Type.String()),
     }),
     traffic: Type.Array(trafficInstruction),
   }),

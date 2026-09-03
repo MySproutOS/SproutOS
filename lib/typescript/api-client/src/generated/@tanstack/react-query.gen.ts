@@ -28,11 +28,12 @@ import {
   deleteV1OrgsByOrgSlugServicesByServiceIdBranchesByDatabaseBranchId,
   deleteV1UserMeDelete,
   deleteV1UserMeImpersonation,
-  getAdminUsers,
+  deleteV1UserSignInMethodsByMethodId,
   getV1AndroidCatalogue,
   getV1AndroidClientRelease,
   getV1AuthMe,
   getV1DeployDeploymentsByDeploymentId,
+  getV1OauthUserinfo,
   getV1Orgs,
   getV1OrgsByOrgSlug,
   getV1OrgsByOrgSlugAgentConfig,
@@ -103,6 +104,7 @@ import {
   getV1UserMeImpersonation,
   getV1UserMePreferences,
   getV1UserMeProfile,
+  getV1UserSignInMethods,
   type Options,
   patchV1OrgsByOrgSlug,
   patchV1OrgsByOrgSlugAgentCredentialsByCredentialId,
@@ -112,8 +114,6 @@ import {
   patchV1OrgsByOrgSlugRolesByRoleId,
   patchV1UserMePreferences,
   patchV1UserMeProfile,
-  postAdminStoreListingsByListingIdAndroidRelease,
-  postAdminUsersImpersonate,
   postV1ApkSigningComplete,
   postV1ApkSigningFail,
   postV1AuthCliRevoke,
@@ -178,6 +178,7 @@ import {
   postV1OrgsByOrgSlugTransferOwnership,
   postV1StoreListingsBySlugEvents,
   postV1TemplatesResolve,
+  postV1UserSignInMethodsAuthorize,
   postV1WebhooksGithub,
   postV1WebhooksStripe,
   putV1OrgsByOrgSlugAgentConfig,
@@ -242,8 +243,9 @@ import type {
   DeleteV1UserMeImpersonationData,
   DeleteV1UserMeImpersonationError,
   DeleteV1UserMeImpersonationResponse,
-  GetAdminUsersData,
-  GetAdminUsersResponse,
+  DeleteV1UserSignInMethodsByMethodIdData,
+  DeleteV1UserSignInMethodsByMethodIdError,
+  DeleteV1UserSignInMethodsByMethodIdResponse,
   GetV1AndroidCatalogueData,
   GetV1AndroidClientReleaseData,
   GetV1AndroidClientReleaseError,
@@ -252,6 +254,9 @@ import type {
   GetV1AuthMeResponse,
   GetV1DeployDeploymentsByDeploymentIdData,
   GetV1DeployDeploymentsByDeploymentIdResponse,
+  GetV1OauthUserinfoData,
+  GetV1OauthUserinfoError,
+  GetV1OauthUserinfoResponse,
   GetV1OrgsByOrgSlugAgentConfigData,
   GetV1OrgsByOrgSlugAgentConfigError,
   GetV1OrgsByOrgSlugAgentConfigResponse,
@@ -450,6 +455,8 @@ import type {
   GetV1UserMePreferencesResponse,
   GetV1UserMeProfileData,
   GetV1UserMeProfileResponse,
+  GetV1UserSignInMethodsData,
+  GetV1UserSignInMethodsResponse,
   PatchV1OrgsByOrgSlugAgentCredentialsByCredentialIdData,
   PatchV1OrgsByOrgSlugAgentCredentialsByCredentialIdError,
   PatchV1OrgsByOrgSlugAgentCredentialsByCredentialIdResponse,
@@ -472,12 +479,6 @@ import type {
   PatchV1UserMeProfileData,
   PatchV1UserMeProfileError,
   PatchV1UserMeProfileResponse,
-  PostAdminStoreListingsByListingIdAndroidReleaseData,
-  PostAdminStoreListingsByListingIdAndroidReleaseError,
-  PostAdminStoreListingsByListingIdAndroidReleaseResponse,
-  PostAdminUsersImpersonateData,
-  PostAdminUsersImpersonateError,
-  PostAdminUsersImpersonateResponse,
   PostV1ApkSigningCompleteData,
   PostV1ApkSigningFailData,
   PostV1AuthCliRevokeData,
@@ -652,6 +653,9 @@ import type {
   PostV1TemplatesResolveData,
   PostV1TemplatesResolveError,
   PostV1TemplatesResolveResponse,
+  PostV1UserSignInMethodsAuthorizeData,
+  PostV1UserSignInMethodsAuthorizeError,
+  PostV1UserSignInMethodsAuthorizeResponse,
   PostV1WebhooksGithubData,
   PostV1WebhooksGithubError,
   PostV1WebhooksGithubResponse,
@@ -5515,6 +5519,85 @@ export const deleteV1UserMeDeleteMutation = (
   return mutationOptions
 }
 
+export const getV1UserSignInMethodsQueryKey = (options?: Options<GetV1UserSignInMethodsData>) =>
+  createQueryKey("getV1UserSignInMethods", options)
+
+/**
+ * Lists the current user's Google and GitHub sign-in methods
+ */
+export const getV1UserSignInMethodsOptions = (options?: Options<GetV1UserSignInMethodsData>) =>
+  queryOptions<
+    GetV1UserSignInMethodsResponse,
+    DefaultError,
+    GetV1UserSignInMethodsResponse,
+    ReturnType<typeof getV1UserSignInMethodsQueryKey>
+  >({
+    queryFn: async ({ queryKey, signal }) => {
+      const { data } = await getV1UserSignInMethods({
+        ...options,
+        ...queryKey[0],
+        signal,
+        throwOnError: true,
+      })
+      return data
+    },
+    queryKey: getV1UserSignInMethodsQueryKey(options),
+  })
+
+/**
+ * Begins a session-bound sign-in identity link or reauthorization
+ */
+export const postV1UserSignInMethodsAuthorizeMutation = (
+  options?: Partial<Options<PostV1UserSignInMethodsAuthorizeData>>,
+): UseMutationOptions<
+  PostV1UserSignInMethodsAuthorizeResponse,
+  PostV1UserSignInMethodsAuthorizeError,
+  Options<PostV1UserSignInMethodsAuthorizeData>
+> => {
+  const mutationOptions: UseMutationOptions<
+    PostV1UserSignInMethodsAuthorizeResponse,
+    PostV1UserSignInMethodsAuthorizeError,
+    Options<PostV1UserSignInMethodsAuthorizeData>
+  > = {
+    mutationFn: async (fnOptions) => {
+      const { data } = await postV1UserSignInMethodsAuthorize({
+        ...options,
+        ...fnOptions,
+        throwOnError: true,
+      })
+      return data
+    },
+  }
+  return mutationOptions
+}
+
+/**
+ * Unlinks one sign-in method after explicit confirmation
+ */
+export const deleteV1UserSignInMethodsByMethodIdMutation = (
+  options?: Partial<Options<DeleteV1UserSignInMethodsByMethodIdData>>,
+): UseMutationOptions<
+  DeleteV1UserSignInMethodsByMethodIdResponse,
+  DeleteV1UserSignInMethodsByMethodIdError,
+  Options<DeleteV1UserSignInMethodsByMethodIdData>
+> => {
+  const mutationOptions: UseMutationOptions<
+    DeleteV1UserSignInMethodsByMethodIdResponse,
+    DeleteV1UserSignInMethodsByMethodIdError,
+    Options<DeleteV1UserSignInMethodsByMethodIdData>
+  > = {
+    mutationFn: async (fnOptions) => {
+      const { data } = await deleteV1UserSignInMethodsByMethodId({
+        ...options,
+        ...fnOptions,
+        throwOnError: true,
+      })
+      return data
+    },
+  }
+  return mutationOptions
+}
+
 /**
  * Receives every GitHub App webhook delivery
  */
@@ -5595,6 +5678,31 @@ export const postV1OauthConsentMutation = (
   }
   return mutationOptions
 }
+
+export const getV1OauthUserinfoQueryKey = (options?: Options<GetV1OauthUserinfoData>) =>
+  createQueryKey("getV1OauthUserinfo", options)
+
+/**
+ * OpenID-style claims authorized by the OAuth token's identity scopes
+ */
+export const getV1OauthUserinfoOptions = (options?: Options<GetV1OauthUserinfoData>) =>
+  queryOptions<
+    GetV1OauthUserinfoResponse,
+    GetV1OauthUserinfoError,
+    GetV1OauthUserinfoResponse,
+    ReturnType<typeof getV1OauthUserinfoQueryKey>
+  >({
+    queryFn: async ({ queryKey, signal }) => {
+      const { data } = await getV1OauthUserinfo({
+        ...options,
+        ...queryKey[0],
+        signal,
+        throwOnError: true,
+      })
+      return data
+    },
+    queryKey: getV1OauthUserinfoQueryKey(options),
+  })
 
 /**
  * RFC 6749 token endpoint: authorization_code and refresh_token grants
@@ -6033,127 +6141,3 @@ export const getV1AndroidCatalogueOptions = (options?: Options<GetV1AndroidCatal
     },
     queryKey: getV1AndroidCatalogueQueryKey(options),
   })
-
-/**
- * Selects the exact signed Android release published by a global listing
- */
-export const postAdminStoreListingsByListingIdAndroidReleaseMutation = (
-  options?: Partial<Options<PostAdminStoreListingsByListingIdAndroidReleaseData>>,
-): UseMutationOptions<
-  PostAdminStoreListingsByListingIdAndroidReleaseResponse,
-  PostAdminStoreListingsByListingIdAndroidReleaseError,
-  Options<PostAdminStoreListingsByListingIdAndroidReleaseData>
-> => {
-  const mutationOptions: UseMutationOptions<
-    PostAdminStoreListingsByListingIdAndroidReleaseResponse,
-    PostAdminStoreListingsByListingIdAndroidReleaseError,
-    Options<PostAdminStoreListingsByListingIdAndroidReleaseData>
-  > = {
-    mutationFn: async (fnOptions) => {
-      const { data } = await postAdminStoreListingsByListingIdAndroidRelease({
-        ...options,
-        ...fnOptions,
-        throwOnError: true,
-      })
-      return data
-    },
-  }
-  return mutationOptions
-}
-
-export const getAdminUsersQueryKey = (options?: Options<GetAdminUsersData>) =>
-  createQueryKey("getAdminUsers", options)
-
-/**
- * Find a user across every organization
- */
-export const getAdminUsersOptions = (options?: Options<GetAdminUsersData>) =>
-  queryOptions<
-    GetAdminUsersResponse,
-    DefaultError,
-    GetAdminUsersResponse,
-    ReturnType<typeof getAdminUsersQueryKey>
-  >({
-    queryFn: async ({ queryKey, signal }) => {
-      const { data } = await getAdminUsers({
-        ...options,
-        ...queryKey[0],
-        signal,
-        throwOnError: true,
-      })
-      return data
-    },
-    queryKey: getAdminUsersQueryKey(options),
-  })
-
-export const getAdminUsersInfiniteQueryKey = (
-  options?: Options<GetAdminUsersData>,
-): QueryKey<Options<GetAdminUsersData>> => createQueryKey("getAdminUsers", options, true)
-
-/**
- * Find a user across every organization
- */
-export const getAdminUsersInfiniteOptions = (options?: Options<GetAdminUsersData>) => {
-  const opts = infiniteQueryOptions<
-    GetAdminUsersResponse,
-    DefaultError,
-    InfiniteData<GetAdminUsersResponse>,
-    QueryKey<Options<GetAdminUsersData>>,
-    string | Pick<QueryKey<Options<GetAdminUsersData>>[0], "body" | "headers" | "path" | "query">
-  >(
-    // @ts-ignore
-    {
-      queryFn: async ({ pageParam, queryKey, signal }) => {
-        // @ts-ignore
-        const page: Pick<
-          QueryKey<Options<GetAdminUsersData>>[0],
-          "body" | "headers" | "path" | "query"
-        > =
-          typeof pageParam === "object"
-            ? pageParam
-            : {
-                query: {
-                  cursor: pageParam,
-                },
-              }
-        const params = createInfiniteParams(queryKey, page)
-        const { data } = await getAdminUsers({
-          ...options,
-          ...params,
-          signal,
-          throwOnError: true,
-        })
-        return data
-      },
-      queryKey: getAdminUsersInfiniteQueryKey(options),
-    },
-  )
-  return opts as Omit<typeof opts, "initialData">
-}
-
-/**
- * Sign in as a user, for support. Recorded against both people.
- */
-export const postAdminUsersImpersonateMutation = (
-  options?: Partial<Options<PostAdminUsersImpersonateData>>,
-): UseMutationOptions<
-  PostAdminUsersImpersonateResponse,
-  PostAdminUsersImpersonateError,
-  Options<PostAdminUsersImpersonateData>
-> => {
-  const mutationOptions: UseMutationOptions<
-    PostAdminUsersImpersonateResponse,
-    PostAdminUsersImpersonateError,
-    Options<PostAdminUsersImpersonateData>
-  > = {
-    mutationFn: async (fnOptions) => {
-      const { data } = await postAdminUsersImpersonate({
-        ...options,
-        ...fnOptions,
-        throwOnError: true,
-      })
-      return data
-    },
-  }
-  return mutationOptions
-}

@@ -44,6 +44,247 @@ export type ErrorResponseT = {
   error: ErrorObjectT
 }
 
+export type PostAdminStoreListingsByListingIdAndroidReleaseData = {
+  body?: {
+    androidAppId: string | null
+  }
+  path: {
+    listingId: string
+  }
+  query?: never
+  url: "/admin/store/listings/{listingId}/android-release"
+}
+
+export type PostAdminStoreListingsByListingIdAndroidReleaseErrors = {
+  /**
+   * Listing or release is not publishable
+   */
+  400: ErrorResponseT
+  /**
+   * Caller is not a platform admin
+   */
+  403: ErrorResponseT
+  /**
+   * No such listing
+   */
+  404: ErrorResponseT
+}
+
+export type PostAdminStoreListingsByListingIdAndroidReleaseError =
+  PostAdminStoreListingsByListingIdAndroidReleaseErrors[keyof PostAdminStoreListingsByListingIdAndroidReleaseErrors]
+
+export type PostAdminStoreListingsByListingIdAndroidReleaseResponses = {
+  /**
+   * The canonical Android release, or null when removed
+   */
+  200: {
+    androidAppId: string | null
+  }
+}
+
+export type PostAdminStoreListingsByListingIdAndroidReleaseResponse =
+  PostAdminStoreListingsByListingIdAndroidReleaseResponses[keyof PostAdminStoreListingsByListingIdAndroidReleaseResponses]
+
+export type GetAdminManagedDomainPoliciesData = {
+  body?: never
+  path?: never
+  query?: never
+  url: "/admin/managed-domain-policies"
+}
+
+export type GetAdminManagedDomainPoliciesResponses = {
+  /**
+   * Policies
+   */
+  200: {
+    data: Array<{
+      id: string
+      suffix: string
+      organizationId: string
+      status: "active" | "disabled"
+      createdByUserId: string
+      updatedByUserId: string
+      disabledByUserId: string | null
+      createdAt: Date
+      updatedAt: Date
+      disabledAt: Date | null
+    }>
+  }
+}
+
+export type GetAdminManagedDomainPoliciesResponse =
+  GetAdminManagedDomainPoliciesResponses[keyof GetAdminManagedDomainPoliciesResponses]
+
+export type PostAdminManagedDomainPoliciesData = {
+  body?: {
+    suffix: string
+    organizationId: string
+  }
+  path?: never
+  query?: never
+  url: "/admin/managed-domain-policies"
+}
+
+export type PostAdminManagedDomainPoliciesErrors = {
+  /**
+   * Invalid suffix
+   */
+  400: ErrorResponseT
+  /**
+   * Organization not found
+   */
+  404: ErrorResponseT
+  /**
+   * Suffix already managed
+   */
+  409: ErrorResponseT
+}
+
+export type PostAdminManagedDomainPoliciesError =
+  PostAdminManagedDomainPoliciesErrors[keyof PostAdminManagedDomainPoliciesErrors]
+
+export type PostAdminManagedDomainPoliciesResponses = {
+  /**
+   * Policy created
+   */
+  201: {
+    id: string
+    suffix: string
+    organizationId: string
+    status: "active" | "disabled"
+    createdByUserId: string
+    updatedByUserId: string
+    disabledByUserId: string | null
+    createdAt: Date
+    updatedAt: Date
+    disabledAt: Date | null
+  }
+}
+
+export type PostAdminManagedDomainPoliciesResponse =
+  PostAdminManagedDomainPoliciesResponses[keyof PostAdminManagedDomainPoliciesResponses]
+
+export type DeleteAdminManagedDomainPoliciesByPolicyIdData = {
+  body?: never
+  path: {
+    policyId: string
+  }
+  query?: never
+  url: "/admin/managed-domain-policies/{policyId}"
+}
+
+export type DeleteAdminManagedDomainPoliciesByPolicyIdErrors = {
+  /**
+   * Policy not found
+   */
+  404: ErrorResponseT
+}
+
+export type DeleteAdminManagedDomainPoliciesByPolicyIdError =
+  DeleteAdminManagedDomainPoliciesByPolicyIdErrors[keyof DeleteAdminManagedDomainPoliciesByPolicyIdErrors]
+
+export type DeleteAdminManagedDomainPoliciesByPolicyIdResponses = {
+  /**
+   * Policy deletion started
+   */
+  204: void
+}
+
+export type DeleteAdminManagedDomainPoliciesByPolicyIdResponse =
+  DeleteAdminManagedDomainPoliciesByPolicyIdResponses[keyof DeleteAdminManagedDomainPoliciesByPolicyIdResponses]
+
+export type GetAdminManagedDomainPoliciesByPolicyIdData = {
+  body?: never
+  path: {
+    policyId: string
+  }
+  query?: never
+  url: "/admin/managed-domain-policies/{policyId}"
+}
+
+export type GetAdminManagedDomainPoliciesByPolicyIdErrors = {
+  /**
+   * Policy not found
+   */
+  404: ErrorResponseT
+}
+
+export type GetAdminManagedDomainPoliciesByPolicyIdError =
+  GetAdminManagedDomainPoliciesByPolicyIdErrors[keyof GetAdminManagedDomainPoliciesByPolicyIdErrors]
+
+export type GetAdminManagedDomainPoliciesByPolicyIdResponses = {
+  /**
+   * Policy
+   */
+  200: {
+    id: string
+    suffix: string
+    organizationId: string
+    status: "active" | "disabled"
+    createdByUserId: string
+    updatedByUserId: string
+    disabledByUserId: string | null
+    createdAt: Date
+    updatedAt: Date
+    disabledAt: Date | null
+  }
+}
+
+export type GetAdminManagedDomainPoliciesByPolicyIdResponse =
+  GetAdminManagedDomainPoliciesByPolicyIdResponses[keyof GetAdminManagedDomainPoliciesByPolicyIdResponses]
+
+export type PatchAdminManagedDomainPoliciesByPolicyIdData = {
+  body?: {
+    suffix?: string
+    organizationId?: string
+    status?: "active" | "disabled"
+  }
+  path: {
+    policyId: string
+  }
+  query?: never
+  url: "/admin/managed-domain-policies/{policyId}"
+}
+
+export type PatchAdminManagedDomainPoliciesByPolicyIdErrors = {
+  /**
+   * Invalid update
+   */
+  400: ErrorResponseT
+  /**
+   * Policy or organization not found
+   */
+  404: ErrorResponseT
+  /**
+   * Attached domains prevent reassignment
+   */
+  409: ErrorResponseT
+}
+
+export type PatchAdminManagedDomainPoliciesByPolicyIdError =
+  PatchAdminManagedDomainPoliciesByPolicyIdErrors[keyof PatchAdminManagedDomainPoliciesByPolicyIdErrors]
+
+export type PatchAdminManagedDomainPoliciesByPolicyIdResponses = {
+  /**
+   * Policy updated
+   */
+  200: {
+    id: string
+    suffix: string
+    organizationId: string
+    status: "active" | "disabled"
+    createdByUserId: string
+    updatedByUserId: string
+    disabledByUserId: string | null
+    createdAt: Date
+    updatedAt: Date
+    disabledAt: Date | null
+  }
+}
+
+export type PatchAdminManagedDomainPoliciesByPolicyIdResponse =
+  PatchAdminManagedDomainPoliciesByPolicyIdResponses[keyof PatchAdminManagedDomainPoliciesByPolicyIdResponses]
+
 export type GetAdminUsersData = {
   body?: never
   path?: never
