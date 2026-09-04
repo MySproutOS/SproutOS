@@ -65,7 +65,9 @@ export const oauthSchemaDiscoveryResponse = Type.Object({
 })
 
 export const oauthSchemaUserinfoResponse = Type.Object({
-  sub: Type.String(),
+  sub: Type.Optional(Type.String()),
+  email: Type.Optional(Type.String()),
+  name: Type.Optional(Type.String()),
   github_user_id: Type.Optional(Type.String()),
   github_login: Type.Optional(Type.String()),
 })

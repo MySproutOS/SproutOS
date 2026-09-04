@@ -7607,7 +7607,9 @@ export type GetV1OauthUserinfoResponses = {
    * Claims for the token subject
    */
   200: {
-    sub: string
+    sub?: string
+    email?: string
+    name?: string
     github_user_id?: string
     github_login?: string
   }

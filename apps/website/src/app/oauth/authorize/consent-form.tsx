@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { type ChangeEvent, useCallback, useMemo, useState } from "react"
 import { Button } from "@ui/base/ui/button"
 import { Checkbox } from "@ui/base/ui/checkbox"
 import { deniedAuthorizationRedirect } from "./consent-redirect"
@@ -30,10 +30,16 @@ type Client = {
  * The catalogue lives in the API's RBAC module and is not importable from here, which is fine: the
  * grammar is the contract and the two halves are more readable apart than a raw `project:delete`.
  */
-function describe(scope: string): { resource: string; action: string } {
-  if (scope === "github:identity") {
-    return { resource: "GitHub contributions", action: "Identify" }
-  }
+const IDENTITY_SCOPE_DESCRIPTIONS: Record<string, { resource: string; action: string }> = {
+  openid: { resource: "SproutOS account", action: "Identify" },
+  email: { resource: "email address", action: "See" },
+  profile: { resource: "name", action: "See" },
+  "github:identity": { resource: "GitHub contributions", action: "Identify" },
+}
+
+export function describeScope(scope: string): { resource: string; action: string } {
+  const identityDescription = IDENTITY_SCOPE_DESCRIPTIONS[scope]
+  if (identityDescription !== undefined) return identityDescription
   const [resource, action] = scope.split(":")
   return { resource: resource ?? scope, action: action ?? "" }
 }
@@ -72,14 +78,20 @@ export function ConsentForm({
     (organization) => organization.id === organizationId,
   )
 
-  const mandatoryScopes = scopes.filter((scope) => !optionalScopes.includes(scope))
-  const grantedScopes = [...mandatoryScopes, ...grantedOptionalScopes]
+  const mandatoryScopes = useMemo(
+    () => scopes.filter((scope) => !optionalScopes.includes(scope)),
+    [optionalScopes, scopes],
+  )
+  const grantedScopes = useMemo(
+    () => [...mandatoryScopes, ...grantedOptionalScopes],
+    [grantedOptionalScopes, mandatoryScopes],
+  )
 
-  function deny() {
+  const deny = useCallback(() => {
     window.location.assign(deniedAuthorizationRedirect(redirectUri, state))
-  }
+  }, [redirectUri, state])
 
-  async function approve() {
+  const submitApproval = useCallback(async () => {
     setBusy(true)
     setError(null)
 
@@ -114,7 +126,28 @@ export function ConsentForm({
       setError("Could not reach SproutOS. Nothing was granted.")
       setBusy(false)
     }
-  }
+  }, [
+    apiBase,
+    client.id,
+    codeChallenge,
+    codeChallengeMethod,
+    grantedScopes,
+    organizationId,
+    redirectUri,
+    state,
+  ])
+
+  const approve = useCallback(() => {
+    void submitApproval()
+  }, [submitApproval])
+
+  const toggleDatabaseCreate = useCallback((checked: boolean) => {
+    setGrantedOptionalScopes(checked ? ["database:create"] : [])
+  }, [])
+
+  const selectOrganization = useCallback((event: ChangeEvent<HTMLSelectElement>) => {
+    setOrganizationId(event.target.value)
+  }, [])
 
   return (
     <main className="container-page flex min-h-screen items-center justify-center py-16">
@@ -168,7 +201,7 @@ export function ConsentForm({
 
         <ul className="mt-3 flex flex-col gap-1.5">
           {mandatoryScopes.map((scope) => {
-            const { resource, action } = describe(scope)
+            const { resource, action } = describeScope(scope)
             return (
               <li key={scope} className="flex items-baseline gap-2 text-sm">
                 <span aria-hidden="true" className="text-muted-foreground">
@@ -190,9 +223,7 @@ export function ConsentForm({
               <Checkbox
                 id="database-create"
                 checked={grantedOptionalScopes.includes("database:create")}
-                onCheckedChange={(checked) => {
-                  setGrantedOptionalScopes(checked ? ["database:create"] : [])
-                }}
+                onCheckedChange={toggleDatabaseCreate}
               />
               <div className="flex flex-col gap-1">
                 <label htmlFor="database-create" className="text-sm font-medium">
@@ -236,9 +267,7 @@ export function ConsentForm({
             <select
               id="organizationId"
               value={organizationId}
-              onChange={(event) => {
-                setOrganizationId(event.target.value)
-              }}
+              onChange={selectOrganization}
               className="h-9 rounded-md border border-border bg-background px-2 text-sm"
             >
               {organizations.map((organization) => (
@@ -260,7 +289,7 @@ export function ConsentForm({
           <Button variant="ghost" type="button" onClick={deny} disabled={busy}>
             Cancel
           </Button>
-          <Button type="button" onClick={() => void approve()} disabled={busy}>
+          <Button type="button" onClick={approve} disabled={busy}>
             {busy ? "Authorizing…" : `Authorize ${client.name}`}
           </Button>
         </div>

@@ -272,10 +272,18 @@ const app = new Hono()
       }
 
       const response: {
-        sub: string
+        sub?: string
+        email?: string
+        name?: string
         github_user_id?: string
         github_login?: string
-      } = { sub: c.var.user.id }
+      } = {}
+
+      if (c.var.auth.scopes.includes("openid")) response.sub = c.var.user.id
+      if (c.var.auth.scopes.includes("email")) response.email = c.var.user.email
+      if (c.var.auth.scopes.includes("profile") && c.var.user.name !== null) {
+        response.name = c.var.user.name
+      }
 
       if (c.var.auth.scopes.includes("github:identity")) {
         const github = await fetchAccount(db).newestGithubIdentity(c.var.user.id, [
@@ -373,7 +381,7 @@ const app = new Hono()
           active: true,
           scope: result.scopes?.join(" "),
           client_id: result.oauthClientId,
-          sub: result.userId,
+          sub: result.scopes?.includes("openid") ? result.userId : undefined,
           exp:
             result.expiresAt === undefined
               ? undefined
