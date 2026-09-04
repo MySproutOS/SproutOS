@@ -1,6 +1,21 @@
 import { describe, expect, it } from "vitest"
 import app from "../index"
 
+async function token(clientId: string): Promise<Response> {
+  return await app.request("/v1/oauth/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      grant_type: "authorization_code",
+      client_id: clientId,
+      client_secret: "client_secret_whatever",
+      code: "irrelevant",
+      redirect_uri: "https://example.com/callback",
+      code_verifier: "x".repeat(43),
+    }),
+  })
+}
+
 /**
  * The discovery document, which is the only contract a third-party client has.
  *
@@ -35,7 +50,9 @@ describe("the OAuth discovery document", () => {
     expect(document.introspection_endpoint).toBe(`${API}/v1/oauth/introspect`)
     expect(document.revocation_endpoint).toBe(`${API}/v1/oauth/revoke`)
     expect(document.userinfo_endpoint).toBe(`${API}/v1/oauth/userinfo`)
-    expect(document.scopes_supported).toContain("github:identity")
+    expect(document.scopes_supported).toEqual(
+      expect.arrayContaining(["openid", "email", "profile", "github:identity"]),
+    )
   })
 
   it("keeps the issuer and the authorization page on the website host", async () => {
@@ -77,21 +94,6 @@ describe("the OAuth discovery document", () => {
  * These need no database: the shape check runs before any query, which is the fix.
  */
 describe("a client id that is not a uuid", () => {
-  async function token(clientId: string): Promise<Response> {
-    return await app.request("/v1/oauth/token", {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams({
-        grant_type: "authorization_code",
-        client_id: clientId,
-        client_secret: "client_secret_whatever",
-        code: "irrelevant",
-        redirect_uri: "https://example.com/callback",
-        code_verifier: "x".repeat(43),
-      }),
-    })
-  }
-
   it("is invalid_client at the token endpoint, not server_error", async () => {
     const response = await token("not-a-uuid")
 

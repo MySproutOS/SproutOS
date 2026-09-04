@@ -77,6 +77,9 @@ export function grantDate(iso: string): string {
  * hidden: a scope nobody wrote a label for is still a permission the application has.
  */
 const SCOPE_LABELS: Record<string, string> = {
+  openid: "Identify your SproutOS account",
+  email: "See your email address",
+  profile: "See your name",
   "github:identity": "Identify your GitHub contributions",
   "database:create": "Create databases",
   "database:read": "See your databases",

@@ -1,7 +1,9 @@
+/* oxlint-disable no-await-in-loop */
 import { spawn } from "node:child_process"
 import { readFile } from "node:fs/promises"
 import { fileURLToPath } from "node:url"
 import { post } from "@lib/billing"
+import { hashClientSecret } from "@lib/oauth-provider"
 import { db } from "@sproutos/db"
 import { encodeBase64UrlNoPadding, sha256Utf8 } from "@utils/crypto"
 import { Redis } from "ioredis"
@@ -24,6 +26,7 @@ type Json = Record<string, unknown>
 const FASTAPI_FIXTURE = new URL("./fixtures/oauth-fastapi/", import.meta.url)
 const redirectUri = "http://127.0.0.1:8787/oauth/callback"
 const verifier = `oauth-acceptance-${v7()}-${v7()}`
+const clientSecret = "client_secret_oauth_identity_acceptance_boundary"
 const reachable = await databaseReachable()
 const kmsUp = await (async () => {
   if (await kmsReachable()) return true
@@ -99,6 +102,7 @@ async function authorize(scopes: string[], state: string): Promise<string> {
     body: new URLSearchParams({
       grant_type: "authorization_code",
       client_id: clientId,
+      client_secret: clientSecret,
       code: code!,
       redirect_uri: redirectUri,
       code_verifier: verifier,
@@ -110,6 +114,21 @@ async function authorize(scopes: string[], state: string): Promise<string> {
   expect(exchangedScopes).toHaveLength(scopes.length)
   expect(new Set(exchangedScopes)).toEqual(new Set(scopes))
   return String(exchanged.access_token)
+}
+
+async function introspectAccessToken(accessToken: string): Promise<Json> {
+  const response = await app.request("/v1/oauth/introspect", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded",
+      "x-client-id": clientId,
+      "x-client-secret": clientSecret,
+    },
+    body: new URLSearchParams({ token: accessToken }),
+  })
+  const body = (await response.json()) as Json
+  expect({ status: response.status, body }).toMatchObject({ status: 200 })
+  return body
 }
 
 async function runFastApi(connectionUri: string): Promise<void> {
@@ -223,9 +242,18 @@ beforeAll(async () => {
       organizationId,
       name: "FastAPI Database Builder",
       homepageUrl: "https://fastapi.example.test",
-      clientType: "public",
+      clientType: "confidential",
       defaultScopes: scopes,
       isFirstParty: false,
+    })
+    .execute()
+  await db
+    .insertInto("oauthClientSecret")
+    .values({
+      id: v7(),
+      oauthClientId: clientId,
+      secretHash: await hashClientSecret(clientSecret),
+      lastFour: clientSecret.slice(-4),
     })
     .execute()
   await db
@@ -304,6 +332,73 @@ describe("OAuth FastAPI and database acceptance", () => {
   })
 
   it.skipIf(!reachable || !valkeyReachable || !kmsUp)(
+    "carries identity scopes through consent, token exchange, introspection, and userinfo",
+    async () => {
+      const accountId = v7()
+      await db
+        .insertInto("account")
+        .values({
+          id: accountId,
+          userId: owner!.id,
+          type: "oauth",
+          provider: "github",
+          providerAccountId: "123456789",
+          displayIdentity: "identity-boundary",
+        })
+        .execute()
+
+      try {
+        const scopes = ["openid", "email", "profile", "github:identity"]
+        const accessToken = await authorize(scopes, "identity-scopes")
+
+        const introspected = await introspectAccessToken(accessToken)
+        expect(introspected).toMatchObject({
+          active: true,
+          client_id: clientId,
+          sub: owner!.id,
+        })
+        expect(new Set(String(introspected.scope).split(" "))).toEqual(new Set(scopes))
+        expect((await oauthCall(accessToken, "GET", "/v1/oauth/userinfo")).json).toEqual({
+          sub: owner!.id,
+          email: owner!.email,
+          name: owner!.name,
+          github_user_id: "123456789",
+          github_login: "identity-boundary",
+        })
+
+        const cases = [
+          { scopes: ["openid"], claims: { sub: owner!.id } },
+          { scopes: ["email"], claims: { email: owner!.email } },
+          { scopes: ["profile"], claims: { name: owner!.name } },
+          {
+            scopes: ["github:identity"],
+            claims: {
+              github_user_id: "123456789",
+              github_login: "identity-boundary",
+            },
+          },
+          { scopes: ["project:read"], claims: {} },
+        ]
+
+        for (const [index, testCase] of cases.entries()) {
+          const scopedToken = await authorize(testCase.scopes, `identity-least-privilege-${index}`)
+          expect((await oauthCall(scopedToken, "GET", "/v1/oauth/userinfo")).json).toEqual(
+            testCase.claims,
+          )
+
+          const scopedIntrospection = await introspectAccessToken(scopedToken)
+          expect(scopedIntrospection).toHaveProperty("active", true)
+          expect(scopedIntrospection.sub).toBe(
+            testCase.scopes.includes("openid") ? owner!.id : undefined,
+          )
+        }
+      } finally {
+        await db.deleteFrom("account").where("id", "=", accountId).execute()
+      }
+    },
+  )
+
+  it.skipIf(!reachable || !valkeyReachable || !kmsUp)(
     "returns only live verified GitHub identity claims with github:identity",
     async () => {
       const accountId = v7()
@@ -325,7 +420,6 @@ describe("OAuth FastAPI and database acceptance", () => {
         expect(scoped).toEqual({
           status: 200,
           json: {
-            sub: owner!.id,
             github_user_id: "987654321",
             github_login: "original-handle",
           },
@@ -340,14 +434,10 @@ describe("OAuth FastAPI and database acceptance", () => {
         expect(renamed.json).toMatchObject({ github_login: "renamed-handle" })
 
         const unscopedToken = await authorize(["project:read"], "without-github-identity")
-        expect((await oauthCall(unscopedToken, "GET", "/v1/oauth/userinfo")).json).toEqual({
-          sub: owner!.id,
-        })
+        expect((await oauthCall(unscopedToken, "GET", "/v1/oauth/userinfo")).json).toEqual({})
 
         await db.deleteFrom("account").where("id", "=", accountId).execute()
-        expect((await oauthCall(scopedToken, "GET", "/v1/oauth/userinfo")).json).toEqual({
-          sub: owner!.id,
-        })
+        expect((await oauthCall(scopedToken, "GET", "/v1/oauth/userinfo")).json).toEqual({})
       } finally {
         await db.deleteFrom("account").where("id", "=", accountId).execute()
       }
