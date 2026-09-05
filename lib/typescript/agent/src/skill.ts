@@ -254,7 +254,7 @@ Never print or persist
 
 The \`sprout\` CLI is the only deployment orchestrator. It packages output deterministically,
 negotiates the upload, creates the release, and waits for a terminal result. The reviewed GitHub
-Marketplace action at commit \`92e480886c7656e004c5bdf817e9733b35fd8c18\` is a thin compatibility
+Marketplace action v1.0.3 at commit \`25101dae5786e419cc672da44ed7a788342185da\` is a thin compatibility
 wrapper around the published \`sprout\` v0.3.0 release; it does not implement a second deployment
 protocol.
 
@@ -285,7 +285,7 @@ jobs:
           node-version: 24
       - run: npm ci
       - run: npm run build
-      - uses: MySproutOS/sproutos-deploy-action@92e480886c7656e004c5bdf817e9733b35fd8c18
+      - uses: MySproutOS/sproutos-deploy-action@25101dae5786e419cc672da44ed7a788342185da
         with:
           preset: next            # next | hono | web | function | static | android
           runtime: nodejs24.x
@@ -357,7 +357,7 @@ App Store eligibility and deployment behavior come only from the signed
 plugin digest recorded there. Never infer deployment behavior from an instruction file in an
 arbitrary upstream repository.
 
-The reviewed template source at commit \`fe614e86287579b2c987dd9fadef55fde12fea74\` generates
+The reviewed template source at commit \`91c10f3e1fa540896eab858e6031b1ae18640e36\` generates
 canonical Umami and Memos OIDC workflows that pin the deploy action to its full commit. Never replace
 that pin with a mutable action tag.
 

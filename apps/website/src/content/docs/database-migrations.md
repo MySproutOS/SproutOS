@@ -44,7 +44,7 @@ jobs:
           node-version: 24
       - run: npm ci
       - run: npm run build:migrator
-      - uses: MySproutOS/sproutos-deploy-action@92e480886c7656e004c5bdf817e9733b35fd8c18
+      - uses: MySproutOS/sproutos-deploy-action@25101dae5786e419cc672da44ed7a788342185da
         with:
           preset: hono
           runtime: nodejs24.x
@@ -65,7 +65,7 @@ jobs:
           node-version: 24
       - run: npm ci
       - run: npm run build
-      - uses: MySproutOS/sproutos-deploy-action@92e480886c7656e004c5bdf817e9733b35fd8c18
+      - uses: MySproutOS/sproutos-deploy-action@25101dae5786e419cc672da44ed7a788342185da
         with:
           preset: next
           runtime: nodejs24.x

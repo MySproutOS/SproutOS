@@ -45,8 +45,8 @@ describe("installSproutosSkill", () => {
     expect(body).toContain("sprout deploy reddit-clone-web")
     expect(body).toContain("MySproutOS/Deployment-Templates")
     expect(body).toContain("sproutos.me/install.sh")
-    expect(body).toContain("92e480886c7656e004c5bdf817e9733b35fd8c18")
-    expect(body).toContain("fe614e86287579b2c987dd9fadef55fde12fea74")
+    expect(body).toContain("25101dae5786e419cc672da44ed7a788342185da")
+    expect(body).toContain("91c10f3e1fa540896eab858e6031b1ae18640e36")
     expect(body).toContain("ELASTICSEARCH_URL")
     expect(body).toContain("queue.drain")
     expect(body).toContain("sproutos.run")
@@ -168,7 +168,7 @@ describe("the public skill", () => {
     })
 
     expect(body).toContain(
-      "MySproutOS/sproutos-deploy-action@92e480886c7656e004c5bdf817e9733b35fd8c18",
+      "MySproutOS/sproutos-deploy-action@25101dae5786e419cc672da44ed7a788342185da",
     )
     expect(body).not.toContain("sproutos-deploy-action@v1")
     expect(body).toContain("node-version: 24")

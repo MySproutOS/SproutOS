@@ -9,10 +9,10 @@ describe("the public SproutOS skill", () => {
     expect(response.status).toBe(200)
     expect(response.headers.get("content-type")).toContain("text/markdown")
     expect(body).toContain(
-      "MySproutOS/sproutos-deploy-action@92e480886c7656e004c5bdf817e9733b35fd8c18",
+      "MySproutOS/sproutos-deploy-action@25101dae5786e419cc672da44ed7a788342185da",
     )
     expect(body).toContain("sproutos.me/install.sh")
-    expect(body).toContain("fe614e86287579b2c987dd9fadef55fde12fea74")
+    expect(body).toContain("91c10f3e1fa540896eab858e6031b1ae18640e36")
     expect(body).not.toContain("sproutos-deploy-action@v1")
     expect(body).toContain("sprout deploy <your-project-slug>")
     expect(body).toContain("MySproutOS/Deployment-Templates")
