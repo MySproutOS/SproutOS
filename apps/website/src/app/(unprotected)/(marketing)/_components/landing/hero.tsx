@@ -1,7 +1,7 @@
 import { Button } from "@ui/base/ui/button"
 import Link from "next/link"
 import { StarButton } from "../star-button"
-import { CostReceipt } from "./cost-receipt"
+import { HeroPitches } from "./hero-pitches"
 import { Reveal } from "@ui/spa-shared/reveal"
 
 export function Hero({ stars }: { stars: number | null }) {
@@ -19,7 +19,7 @@ export function Hero({ stars }: { stars: number | null }) {
           </h1>
         </Reveal>
 
-        <div className="mt-14 grid gap-12 lg:grid-cols-[1fr_26rem] lg:items-start lg:gap-16">
+        <div className="mt-14 grid gap-12 lg:grid-cols-[minmax(0,1fr)_30rem] lg:items-start lg:gap-16">
           <Reveal delay={80} className="flex flex-col items-start">
             <p className="max-w-xl text-lg text-muted-foreground text-pretty">
               Pick an open source app from our store, say in a sentence what you want changed, and
@@ -28,6 +28,8 @@ export function Hero({ stars }: { stars: number | null }) {
             </p>
 
             <div className="mt-8 flex flex-wrap items-center gap-3">
+              {/* Base UI requires the framework link itself as its render prop. */}
+              {/* oxlint-disable-next-line react-perf/jsx-no-jsx-as-prop */}
               <Button size="xl" render={<Link href="/login">Get started</Link>} />
               <Link
                 href="/personalize"
@@ -48,7 +50,7 @@ export function Hero({ stars }: { stars: number | null }) {
           </Reveal>
 
           <Reveal delay={160}>
-            <CostReceipt />
+            <HeroPitches />
           </Reveal>
         </div>
       </div>
