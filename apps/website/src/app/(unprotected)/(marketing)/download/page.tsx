@@ -4,9 +4,8 @@ import { cliPlatformLabel, latestCliRelease } from "./cli-release"
 import { latestAndroidClientRelease } from "./android-client-release"
 
 export const metadata = {
-  title: "Get SproutOS for Android · SproutOS",
-  description:
-    "Install the SproutOS Android client to run the apps you have published and the ones other people have.",
+  title: "Download SproutOS · Android and CLI",
+  description: "Install the SproutOS Android client or the latest production-approved Sprout CLI.",
 }
 
 export const dynamic = "force-dynamic"
@@ -192,7 +191,7 @@ export default async function DownloadPage() {
         </ol>
       </section>
 
-      <section className="mt-12 max-w-2xl">
+      <section id="sprout-cli" className="mt-12 max-w-2xl scroll-mt-24">
         <h2 className="text-lg font-medium">Sprout CLI</h2>
         {cliRelease === UNAVAILABLE ? (
           <p className="mt-3 text-muted-foreground">
@@ -203,8 +202,25 @@ export default async function DownloadPage() {
             Command-line downloads will appear here with their checksums after the first release.
           </p>
         ) : (
-          <div className="mt-4 space-y-3">
-            <p className="text-muted-foreground">Version {cliRelease.version}</p>
+          <div className="mt-4 flex flex-col gap-5">
+            <div>
+              <p className="text-muted-foreground">
+                Install the latest production-approved release on macOS or Linux:
+              </p>
+              <pre className="mt-3 overflow-x-auto rounded-md border border-border bg-card p-3 font-mono text-sm">
+                <code>
+                  curl --proto '=https' --tlsv1.2 -fsSL https://sproutos.me/install.sh | bash
+                </code>
+              </pre>
+              <p className="mt-2 text-xs text-muted-foreground">
+                Installs without sudo to ~/.local/bin. Set SPROUT_INSTALL_DIR to choose another
+                directory.
+              </p>
+            </div>
+            <p className="text-muted-foreground">
+              Version {cliRelease.version}. Prefer a manual download on Windows or when you want to
+              inspect and verify the archive before installing.
+            </p>
             <ul className="space-y-3">
               {cliRelease.assets.map((asset) => (
                 <li key={asset.target} className="rounded-md border border-border bg-card p-3">

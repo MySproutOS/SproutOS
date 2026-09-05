@@ -1,6 +1,6 @@
 import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
-import Markdoc, { type RenderableTreeNode, Tag } from "@markdoc/markdoc"
+import { parse, type RenderableTreeNode, Tag, transform, validate } from "@markdoc/markdoc"
 import { format } from "oxfmt"
 import { config } from "../src/lib/markdoc-config"
 
@@ -67,10 +67,9 @@ function plainText(
     /*
       Link targets are content here, not markup.
 
-      The one release tag a reader is most likely to search for — `cli-v0.2.1` — appears only inside
-      a URL, and the old index included it by accident because it searched the raw Markdown. Pulling
-      `href` out deliberately keeps that findable now that the index is built from the tree, where
-      attributes are not children.
+      Some release and installation terms appear only inside URLs, and the old index included them
+      by accident because it searched the raw Markdown. Pulling `href` out deliberately keeps those
+      terms findable now that the index is built from the tree, where attributes are not children.
     */
     const href: unknown = node.attributes.href
     if (typeof href === "string") parts.push(href)
@@ -121,7 +120,7 @@ const docs = readdirSync(directory)
     }
 
     const body = match[2].trim()
-    const ast = Markdoc.parse(body)
+    const ast = parse(body)
 
     /*
       Validation is a build-time gate, not a warning nobody reads.
@@ -130,13 +129,13 @@ const docs = readdirSync(directory)
       a doc that is simply missing a paragraph. Failing here means the person who wrote it finds
       out, rather than a reader.
     */
-    const errors = Markdoc.validate(ast, config).filter((error) => error.error.level === "critical")
+    const errors = validate(ast, config).filter((error) => error.error.level === "critical")
     if (errors.length > 0) {
       const first = errors[0]
       throw new Error(`${file}: ${first.error.message} (line ${first.lines[0] ?? 0})`)
     }
 
-    const content = Markdoc.transform(ast, config)
+    const content = transform(ast, config)
     const headings = collectHeadings(content)
 
     // Every heading needs a unique anchor, or one of two identically-named sections is unreachable.

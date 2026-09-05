@@ -67,9 +67,11 @@ boundaries.
 
 ## Run the same deployment locally
 
-Install `sprout` from the checksummed binaries in the
-[SproutOS CLI v0.2.1 release](https://github.com/MySproutOS/SproutOS/releases/tag/cli-v0.2.1), then
-sign in and deploy:
+Install the latest production-approved `sprout` release on macOS or Linux, then sign in and deploy:
+
+```shell
+curl --proto '=https' --tlsv1.2 -fsSL https://sproutos.me/install.sh | bash
+```
 
 ```shell
 sprout auth login
@@ -86,10 +88,10 @@ command line that will be saved in shell history.
 Every command also supports stable `--json` output for scripts and coding agents. Destructive
 commands require confirmation or `--yes`.
 
-The release contains macOS arm64 and x86-64, Linux arm64 and x86-64, and Windows x86-64 binaries,
-plus `SHA256SUMS` and `sprout-v0.2.1-manifest.json`. Verify the selected archive against both files.
-The action also verifies GitHub's artifact attestation and the release's exact source revision
-before it executes the binary.
+The [download page](/download#sprout-cli) links directly to the promoted release's macOS arm64 and
+x86-64, Linux arm64 and x86-64, and Windows x86-64 binaries, plus their SHA-256 digests. The action
+also verifies GitHub's artifact attestation and the release's exact source revision before it
+executes the binary.
 
 ## Give a coding agent the same contract
 

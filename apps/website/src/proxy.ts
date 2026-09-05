@@ -46,7 +46,7 @@ const NEXTJS_PUBLIC_PREFIXES = [
 const HEALTH_PATH = "/healthz"
 
 /** Exact public paths */
-const NEXTJS_PUBLIC_EXACT = new Set(["/"])
+const NEXTJS_PUBLIC_EXACT = new Set(["/", "/install.sh"])
 
 type SharedRoute = { path: string; spa: "dashboard" | "admin" }
 
