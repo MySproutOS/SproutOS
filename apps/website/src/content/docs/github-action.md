@@ -32,12 +32,14 @@ jobs:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24
       - run: npm ci
       - run: npm run build
       - uses: MySproutOS/sproutos-deploy-action@0d5ce8bb74ecd598ae996c34d7d2cb5ac156a180
         with:
           preset: next
+          runtime: nodejs24.x
+          handler: run.sh
           directory: apps/website/.next/standalone
           project: my-web-project
           api-url: https://api.sproutos.me
@@ -48,7 +50,7 @@ secret. Do not add a long-lived SproutOS token to GitHub for this workflow. The 
 the repository and workflow identity before issuing a short-lived deployment credential.
 
 The action uploads build output; it does not decide how your application builds. Use `next`,
-`hono`, `web`, `static`, or `android` as the preset and point `directory` at the finished artifact. In a
+`hono`, `web`, `function`, `static`, or `android` as the preset and point `directory` at the finished artifact. In a
 monorepo, use one workflow step per deployable target and always name `project`.
 
 Internally, the wrapper exchanges GitHub's OIDC assertion for a short-lived deployment token and
@@ -73,6 +75,7 @@ sign in and deploy:
 sprout auth login
 sprout org use my-team
 sprout deploy my-web-project --preset next \
+  --runtime nodejs24.x --handler run.sh \
   --path apps/website/.next/standalone
 ```
 
@@ -95,6 +98,10 @@ Install [the SproutOS coding-agent skill](/docs/coding-agent-skill) in `.agents/
 template, and deployment boundaries without creating a paid hosted sandbox. A local agent still
 uses the same `sprout deploy my-web-project` command and resources it creates on SproutOS remain
 metered normally.
+
+The build toolchain and deployed runtime are separate settings. Set both explicitly in repeatable
+workflows. Runtime selection does not rebuild native dependencies; the uploaded package must
+already target Linux arm64. See [Runtimes and framework presets](/docs/runtimes).
 
 ## Deployment templates
 

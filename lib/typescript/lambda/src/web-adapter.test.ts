@@ -1,6 +1,13 @@
 import { beforeEach, describe, expect, it } from "vitest"
 
-import { runtimeForPreset, webAdapterForRelease } from "./runtimes"
+import {
+  handlerForPreset,
+  isRuntimeCompatible,
+  isSupportedRuntime,
+  RUNTIME_CATALOGUE,
+  runtimeForPreset,
+  webAdapterForRelease,
+} from "./runtimes"
 import {
   DEFAULT_WEB_ADAPTER_LAYER_VERSION,
   LAMBDA_ARCHITECTURE,
@@ -91,6 +98,7 @@ describe("runtimeForPreset", () => {
       handler: "bootstrap",
       webAdapter: true,
     })
+    expect(runtimeForPreset("function").webAdapter).toBe(false)
     // A static build has no server to adapt.
     expect(runtimeForPreset("static").webAdapter).toBe(false)
     // An unknown preset ships from the action's own repository. It must not silently become an
@@ -111,6 +119,32 @@ describe("runtimeForPreset", () => {
     // being adapted is the bug this whole module exists to fix.
     expect(runtimeForPreset("next").handler).toBe(WEB_ADAPTER_HANDLER)
     expect(runtimeForPreset("hono").handler).toBe(WEB_ADAPTER_HANDLER)
+  })
+
+  it("derives the hidden web handler from the selected runtime", () => {
+    expect(handlerForPreset("web", "nodejs24.x")).toBe("run.sh")
+    expect(handlerForPreset("web", "provided.al2023")).toBe("bootstrap")
+  })
+})
+
+describe("runtime catalogue", () => {
+  it("offers every supported ZIP runtime and excludes previews and container-only runtimes", () => {
+    expect(RUNTIME_CATALOGUE).toHaveLength(21)
+    expect(isSupportedRuntime("nodejs24.x")).toBe(true)
+    expect(isSupportedRuntime("python3.14")).toBe(true)
+    expect(isSupportedRuntime("java25")).toBe(true)
+    expect(isSupportedRuntime("dotnet10")).toBe(true)
+    expect(isSupportedRuntime("ruby4.0")).toBe(true)
+    expect(isSupportedRuntime("nodejs26.x")).toBe(false)
+    expect(isSupportedRuntime("python3.15")).toBe(false)
+    expect(isSupportedRuntime("dotnet9")).toBe(false)
+  })
+
+  it("applies preset compatibility and excludes deprecated Node 20", () => {
+    expect(isRuntimeCompatible("next", "nodejs24.x")).toBe(true)
+    expect(isRuntimeCompatible("next", "python3.14")).toBe(false)
+    expect(isRuntimeCompatible("function", "python3.14")).toBe(true)
+    expect(isSupportedRuntime("nodejs20.x", new Date("2026-09-30T23:59:59Z"))).toBe(false)
   })
 })
 

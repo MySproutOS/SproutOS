@@ -46,6 +46,7 @@ pub enum Command {
     Auth(AuthArgs),
     Org(OrgArgs),
     Region(RegionArgs),
+    Runtime(RuntimeArgs),
     Project(ProjectArgs),
     Env(EnvArgs),
     Service(ServiceArgs),
@@ -104,6 +105,18 @@ pub enum RegionCommand {
 }
 
 #[derive(Debug, Args)]
+pub struct RuntimeArgs {
+    #[command(subcommand)]
+    pub command: RuntimeCommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum RuntimeCommand {
+    /// List Lambda runtimes, compatibility, and lifecycle dates.
+    List,
+}
+
+#[derive(Debug, Args)]
 pub struct ProjectArgs {
     #[command(subcommand)]
     pub command: ProjectCommand,
@@ -122,8 +135,8 @@ pub enum ProjectCommand {
     Get {
         project: String,
     },
-    Create(ProjectCreateArgs),
-    Update(ProjectUpdateArgs),
+    Create(Box<ProjectCreateArgs>),
+    Update(Box<ProjectUpdateArgs>),
     Delete {
         project: String,
     },
@@ -142,6 +155,12 @@ pub struct ProjectCreateArgs {
     pub slug: Option<String>,
     #[arg(long, value_enum, default_value_t = ProjectKind::Site)]
     pub kind: ProjectKind,
+    #[arg(long, value_enum)]
+    pub preset: Option<DeployPreset>,
+    #[arg(long)]
+    pub runtime: Option<String>,
+    #[arg(long)]
+    pub handler: Option<String>,
     /// Override the source or App Store listing root directory.
     #[arg(long)]
     pub root_dir: Option<String>,
@@ -229,6 +248,12 @@ pub struct ProjectUpdateArgs {
     pub name: Option<String>,
     #[arg(long, conflicts_with = "clear_description")]
     pub description: Option<String>,
+    #[arg(long, value_enum)]
+    pub preset: Option<DeployPreset>,
+    #[arg(long)]
+    pub runtime: Option<String>,
+    #[arg(long)]
+    pub handler: Option<String>,
     #[arg(long, conflicts_with = "description")]
     pub clear_description: bool,
     #[arg(long)]
@@ -407,6 +432,7 @@ pub enum DeployPreset {
     Next,
     Hono,
     Web,
+    Function,
     Static,
     Android,
 }
@@ -607,6 +633,9 @@ pub fn validate(cli: &Cli) -> Result<()> {
     }) = &cli.command
         && args.name.is_none()
         && args.description.is_none()
+        && args.preset.is_none()
+        && args.runtime.is_none()
+        && args.handler.is_none()
         && !args.clear_description
         && args.region.is_none()
         && args.slug.is_none()

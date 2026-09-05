@@ -16,6 +16,8 @@ import { environmentFor } from "@lib/jobs"
 import {
   DEFAULT_HANDLER,
   DEFAULT_RUNTIME,
+  handlerForPreset,
+  isRuntimeCompatible,
   isSupportedRuntime,
   runMigration,
   runtimeForPreset,
@@ -154,10 +156,18 @@ function androidArtifactBucket(): string {
   if (process.env.NODE_ENV === "production") throw new Error("ANDROID_ARTIFACT_BUCKET is required")
   return process.env.SERVICE_BUILD_BUCKET ?? "sproutos-dev-artifacts"
 }
+const deploymentPresetSchema = Type.Union([
+  Type.Literal("next"),
+  Type.Literal("hono"),
+  Type.Literal("web"),
+  Type.Literal("function"),
+  Type.Literal("static"),
+  Type.Literal("android"),
+])
 const uploadRequest = Type.Object({
   project: Type.Optional(Type.String({ minLength: 1 })),
   digest: Type.String({ pattern: "^[0-9a-f]{64}$" }),
-  preset: Type.String({ minLength: 1 }),
+  preset: deploymentPresetSchema,
 })
 const uploadResponse = Type.Object({ url: Type.String(), key: Type.String() })
 
@@ -181,7 +191,7 @@ const releaseRequest = Type.Object({
   // either present together or not at all.
   static_key: Type.Optional(Type.String({ minLength: 1 })),
   static_digest: Type.Optional(Type.String({ pattern: "^[0-9a-f]{64}$" })),
-  preset: Type.String({ minLength: 1 }),
+  preset: deploymentPresetSchema,
   environment: Type.String({ minLength: 1 }),
   commit: Type.String({ minLength: 1 }),
   ref: Type.String(),
@@ -271,6 +281,25 @@ const releaseResponse = Type.Object({
   deployment_id: Type.String(),
   url: Type.Optional(Type.String()),
 })
+
+export function resolveReleaseRuntime(
+  preset: string,
+  release: { runtime?: string; handler?: string },
+  project: { deploymentPreset: string | null; runtime: string | null; handler: string | null },
+): { runtime: string | null; handler: string | null } {
+  if (preset === "static" || preset === "android") return { runtime: null, handler: null }
+
+  const defaults = runtimeForPreset(preset)
+  const projectDefaultsMatch = project.deploymentPreset === preset
+  const runtime =
+    release.runtime ?? (projectDefaultsMatch ? project.runtime : null) ?? defaults.runtime
+  const handler =
+    release.handler ??
+    (projectDefaultsMatch ? project.handler : null) ??
+    (preset === "function" ? null : handlerForPreset(preset, runtime))
+
+  return { runtime, handler }
+}
 
 /** The bearer token on the two calls that follow the exchange. */
 function bearer(
@@ -667,14 +696,39 @@ const deploy: Hono = new Hono()
         deploy that queues, runs, and dies inside `UpdateFunctionConfiguration` with an AWS error
         that does not say which value it disliked.
       */
-      const defaults = runtimeForPreset(json.preset)
-      if (json.runtime !== undefined && !isSupportedRuntime(json.runtime)) {
+      const projectDefaults = await fetchProject(db).getOne(authorized.projectId, [
+        "deploymentPreset",
+        "runtime",
+        "handler",
+      ])
+      if (projectDefaults === undefined)
+        return c.json({ message: "That project no longer exists" }, 404)
+      const { runtime: resolvedRuntime, handler: resolvedHandler } = resolveReleaseRuntime(
+        json.preset,
+        json,
+        projectDefaults,
+      )
+      if (resolvedRuntime !== null && !isSupportedRuntime(resolvedRuntime)) {
         return c.json(
           {
-            message: `\`runtime\` must be one of ${SUPPORTED_RUNTIMES.join(", ")} — got \`${json.runtime}\`.`,
+            message: `Runtime \`${resolvedRuntime}\` is unavailable for new deployments.`,
           },
           400,
         )
+      }
+      if (resolvedRuntime !== null && !isRuntimeCompatible(json.preset, resolvedRuntime)) {
+        return c.json(
+          {
+            message: `Runtime \`${resolvedRuntime}\` is incompatible with preset \`${json.preset}\`.`,
+          },
+          400,
+        )
+      }
+      if (
+        json.preset === "function" &&
+        (resolvedHandler === null || !/^\S+$/.test(resolvedHandler))
+      ) {
+        return c.json({ message: "The `function` preset requires a valid handler." }, 400)
       }
 
       if (json.preset === "android") {
@@ -693,8 +747,8 @@ const deploy: Hono = new Hono()
           already carry. It is also what makes rollback correct: republishing an old version has to
           use the runtime that version was built for, not whatever the project names today.
         */
-        runtime: json.runtime ?? defaults.runtime,
-        handler: json.handler ?? defaults.handler,
+        runtime: resolvedRuntime,
+        handler: resolvedHandler,
         /*
           Derived from the preset, never from the request.
 
@@ -708,7 +762,8 @@ const deploy: Hono = new Hono()
           which is why it is off in that case. Repeating the preset's exact handler is not an
           override; generated repositories do that so the complete runtime contract stays visible.
         */
-        webAdapter: webAdapterForRelease(json.preset, json.handler),
+        webAdapter:
+          resolvedHandler === null ? false : webAdapterForRelease(json.preset, json.handler),
         gitMessage: json.message ?? null,
         migrationArtifactKey: json.migration_key ?? null,
         migrationHandler: json.migration_handler ?? null,

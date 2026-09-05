@@ -33,7 +33,8 @@ import {
   useRepositoryNameCheck,
 } from "@frontends/dashboard/data/new-project"
 import { useStoreListings } from "@frontends/dashboard/data/store"
-import { useRegions } from "@frontends/dashboard/data/projects"
+import { useRegions, useRuntimes } from "@frontends/dashboard/data/projects"
+import { RuntimeSettings, preferredRuntime, type DeploymentPreset } from "./runtime-settings"
 import { projectCreateErrorMessage } from "./project-create-error"
 import { nextFreeName, parseRepoRef } from "./repo-ref"
 import { isProjectRootDir } from "./project-root-dir"
@@ -195,6 +196,9 @@ function NewProjectForm({
   const [workflowTrigger, setWorkflowTrigger] = useState<"interval" | "webhook">("interval")
   const [workflowStack, setWorkflowStack] = useState<WorkflowStack>("bullmq-typescript")
   const [selectedRegion, setSelectedRegion] = useState<string | null>(null)
+  const [deploymentPreset, setDeploymentPreset] = useState<DeploymentPreset>("next")
+  const [runtime, setRuntime] = useState<string | null>("nodejs24.x")
+  const [handler, setHandler] = useState("")
 
   const navigate = useNavigate()
   const listings = useStoreListings()
@@ -210,6 +214,7 @@ function NewProjectForm({
     owner ?? ownerOptions.find((candidate) => candidate.isDefault)?.login ?? null
   const create = useCreateProject(orgSlug)
   const regions = useRegions()
+  const runtimes = useRuntimes()
   const availableRegions = regions.data?.data ?? []
   const defaultRegion =
     availableRegions.find((candidate) => candidate.code === "us-east-1")?.code ??
@@ -313,7 +318,15 @@ function NewProjectForm({
       manualUpstreamRef.trim() === "" ||
       (manualUpstreamSettled && manualUpstreamCheck.data?.accessible === true)) &&
     (source !== "repository" || isProjectRootDir(rootDir)) &&
-    (!needsRepoName || (repositoryName.length > 0 && nameCheck.data?.available === true))
+    (!needsRepoName || (repositoryName.length > 0 && nameCheck.data?.available === true)) &&
+    (kind === "workflow" ||
+      source === "store" ||
+      ["static", "android"].includes(deploymentPreset) ||
+      runtime !== null) &&
+    (kind === "workflow" ||
+      source === "store" ||
+      deploymentPreset !== "function" ||
+      handler.trim().length > 0)
 
   return (
     <form
@@ -327,6 +340,13 @@ function NewProjectForm({
               name: name.trim(),
               kind,
               region,
+              ...(kind === "workflow" || source === "store"
+                ? {}
+                : {
+                    deploymentPreset,
+                    ...(["static", "android"].includes(deploymentPreset) ? {} : { runtime }),
+                    ...(deploymentPreset === "function" ? { handler: handler.trim() } : {}),
+                  }),
               ...(parentProjectId === null ? {} : { parentProjectId }),
               source:
                 source === "store"
@@ -478,6 +498,27 @@ function NewProjectForm({
             </Select>
           </div>
         </div>
+      )}
+
+      {kind === "site" && source !== "store" && (
+        <RuntimeSettings
+          preset={deploymentPreset}
+          runtime={runtime}
+          handler={handler}
+          runtimes={runtimes.data?.data ?? []}
+          onPresetChange={(nextPreset) => {
+            setDeploymentPreset(nextPreset)
+            const nextRuntime = preferredRuntime(runtimes.data?.data ?? [], nextPreset)
+            setRuntime(nextRuntime)
+            if (nextRuntime === null) {
+              setHandler("")
+              return
+            }
+            if (nextPreset !== "function") setHandler("")
+          }}
+          onRuntimeChange={setRuntime}
+          onHandlerChange={setHandler}
+        />
       )}
 
       <div className="flex flex-col gap-1.5">

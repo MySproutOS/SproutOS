@@ -107,7 +107,7 @@ export function webAdapterLayerArn(region: string): string | undefined {
  * `AWS_LWA_PORT` to know where to send the request. Setting only one produces a function that
  * starts, listens somewhere, and times out on every invocation.
  */
-export function webAdapterEnv(runtime = "nodejs22.x"): Record<string, string> {
+export function webAdapterEnv(runtime = "nodejs24.x"): Record<string, string> {
   return {
     ...(runtime.startsWith("provided.") ? {} : { AWS_LAMBDA_EXEC_WRAPPER: "/opt/bootstrap" }),
     // Without this, an adapted HTTP server can return 500 and Lambda still records the invocation

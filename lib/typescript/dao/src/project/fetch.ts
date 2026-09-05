@@ -9,6 +9,18 @@ import type { Kysely, Selectable } from "kysely"
  * cleanly; the only thing standing between that and a cross-tenant read is this predicate.
  */
 export function fetchProject(db: Kysely<DB>) {
+  async function getOne<T extends (keyof DB["project"])[]>(
+    id: string,
+    fields: T,
+  ): Promise<Pick<Selectable<DB["project"]>, T[number]> | undefined> {
+    return await db
+      .selectFrom("project")
+      .select(fields)
+      .where("id", "=", id)
+      .where("deletedAt", "is", null)
+      .executeTakeFirst()
+  }
+
   async function getInOrganization<T extends (keyof DB["project"])[]>(
     organizationId: string,
     id: string,
@@ -48,6 +60,9 @@ export function fetchProject(db: Kysely<DB>) {
         "project.id as id",
         "project.name as name",
         "project.description as description",
+        "project.deploymentPreset as deploymentPreset",
+        "project.runtime as runtime",
+        "project.handler as handler",
         "project.slug as slug",
         "project.kind as kind",
         "project.state as state",
@@ -172,6 +187,7 @@ export function fetchProject(db: Kysely<DB>) {
     findConflictingTarget,
     getBySlug,
     getInOrganization,
+    getOne,
     listChildren,
     listInOrganizationQuery,
     primaryDestination,

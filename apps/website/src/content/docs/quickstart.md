@@ -68,7 +68,7 @@ The fastest manual path is the CLI:
 ```shell
 sprout auth login
 sprout org use my-team
-sprout deploy my-site --preset next --path .next/standalone
+sprout deploy my-site --preset next --runtime nodejs24.x --path .next/standalone
 ```
 
 For repeatable production releases, use the GitHub Action with GitHub OIDC. Build first, deploy the

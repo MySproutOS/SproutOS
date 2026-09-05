@@ -426,11 +426,11 @@ fn read_stdin_value(command: &Command) -> Result<Option<String>> {
         || matches!(
             command,
             Command::Project(ProjectArgs {
-                command: ProjectCommand::Create(ProjectCreateArgs {
-                    template_input_file: Some(path),
-                    ..
-                })
-            }) if path.as_os_str() == "-"
+                command: ProjectCommand::Create(args)
+            }) if args
+                .template_input_file
+                .as_deref()
+                .is_some_and(|path| path.as_os_str() == "-")
         );
     if reads_stdin {
         let mut value = String::new();

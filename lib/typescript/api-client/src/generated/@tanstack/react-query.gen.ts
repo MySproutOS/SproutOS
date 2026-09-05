@@ -95,6 +95,7 @@ import {
   getV1OrgsByOrgSlugWorkflowRuns,
   getV1OrgsByOrgSlugWorkflows,
   getV1Regions,
+  getV1Runtimes,
   getV1StoreCategories,
   getV1StoreFeatured,
   getV1StoreListings,
@@ -435,6 +436,8 @@ import type {
   GetV1OrgsResponse,
   GetV1RegionsData,
   GetV1RegionsResponse,
+  GetV1RuntimesData,
+  GetV1RuntimesResponse,
   GetV1StoreCategoriesData,
   GetV1StoreCategoriesResponse,
   GetV1StoreFeaturedData,
@@ -5118,6 +5121,31 @@ export const getV1RegionsOptions = (options?: Options<GetV1RegionsData>) =>
       return data
     },
     queryKey: getV1RegionsQueryKey(options),
+  })
+
+export const getV1RuntimesQueryKey = (options?: Options<GetV1RuntimesData>) =>
+  createQueryKey("getV1Runtimes", options)
+
+/**
+ * Lambda ZIP runtimes that SproutOS recognizes and their lifecycle metadata
+ */
+export const getV1RuntimesOptions = (options?: Options<GetV1RuntimesData>) =>
+  queryOptions<
+    GetV1RuntimesResponse,
+    DefaultError,
+    GetV1RuntimesResponse,
+    ReturnType<typeof getV1RuntimesQueryKey>
+  >({
+    queryFn: async ({ queryKey, signal }) => {
+      const { data } = await getV1Runtimes({
+        ...options,
+        ...queryKey[0],
+        signal,
+        throwOnError: true,
+      })
+      return data
+    },
+    queryKey: getV1RuntimesQueryKey(options),
   })
 
 export const getV1StoreCategoriesQueryKey = (options?: Options<GetV1StoreCategoriesData>) =>

@@ -5,6 +5,13 @@ import {
   sealProjectFileContents,
 } from "@lib/envelope"
 import {
+  handlerForPreset,
+  isRuntimeCompatible,
+  isSupportedRuntime,
+  runtimeForPreset,
+  type DeploymentPreset,
+} from "@lib/lambda"
+import {
   GITHUB_EVENT_KINDS,
   installationDiscoveryIdempotencyKey,
   JOB_KINDS,
@@ -303,6 +310,9 @@ const PROJECT_FIELDS = [
   "id",
   "name",
   "description",
+  "deploymentPreset",
+  "runtime",
+  "handler",
   "slug",
   "kind",
   "state",
@@ -433,6 +443,9 @@ function serializeProject(
     id: project.id,
     name: project.name,
     description: project.description,
+    deploymentPreset: project.deploymentPreset,
+    runtime: project.runtime,
+    handler: project.handler,
     slug: project.slug,
     kind: project.kind,
     state: project.state,
@@ -458,6 +471,76 @@ function serializeProject(
     repositoryName: repository.name,
     repositoryProvenance: repository.provenance,
   }
+}
+
+type ProjectRuntimeInput = {
+  deploymentPreset?: DeploymentPreset | null
+  runtime?: string | null
+  handler?: string | null
+  isGroup: boolean
+  kind: string
+}
+
+export function projectRuntimeConfiguration(
+  input: ProjectRuntimeInput,
+):
+  | { deploymentPreset: string | null; runtime: string | null; handler: string | null }
+  | { error: string; target: string } {
+  if (input.isGroup || input.kind === "workflow") {
+    if (input.deploymentPreset || input.runtime || input.handler) {
+      return {
+        error: "Groups and workflow projects do not use Lambda runtime settings",
+        target: "deploymentPreset",
+      }
+    }
+    return { deploymentPreset: null, runtime: null, handler: null }
+  }
+
+  const preset = input.deploymentPreset
+  if (preset === undefined || preset === null) {
+    if (input.runtime || input.handler) {
+      return {
+        error: "Choose a deployment preset before configuring a runtime",
+        target: "deploymentPreset",
+      }
+    }
+    return { deploymentPreset: null, runtime: null, handler: null }
+  }
+  if (preset === "static" || preset === "android") {
+    if (input.runtime || input.handler) {
+      return {
+        error: `The ${preset} preset does not use a Lambda runtime or handler`,
+        target: "runtime",
+      }
+    }
+    return { deploymentPreset: preset, runtime: null, handler: null }
+  }
+
+  const defaults = runtimeForPreset(preset)
+  const runtime = input.runtime ?? defaults.runtime
+  if (!isSupportedRuntime(runtime)) {
+    return { error: `Runtime ${runtime} is unavailable for new deployments`, target: "runtime" }
+  }
+  if (!isRuntimeCompatible(preset, runtime)) {
+    return {
+      error: `Runtime ${runtime} is incompatible with the ${preset} preset`,
+      target: "runtime",
+    }
+  }
+  if (preset !== "function" && input.handler !== undefined && input.handler !== null) {
+    return {
+      error: `The ${preset} preset owns its handler; only function projects configure one`,
+      target: "handler",
+    }
+  }
+  const handler = preset === "function" ? input.handler : handlerForPreset(preset, runtime)
+  if (
+    preset === "function" &&
+    (handler === undefined || handler === null || !/^\S+$/.test(handler))
+  ) {
+    return { error: "Function projects require a handler without whitespace", target: "handler" }
+  }
+  return { deploymentPreset: preset, runtime, handler: handler ?? null }
 }
 
 /**
@@ -986,6 +1069,8 @@ const app = new Hono()
       */
       let listingRootDir: string | null = null
       let listingDockerfilePath: string | null = null
+      let listingDeploymentPreset: DeploymentPreset | undefined
+      let listingRuntime: string | undefined
       let templateInstall:
         | Parameters<ReturnType<typeof provisionProject>["create"]>[0]["templateInstall"]
         | undefined = undefined
@@ -1054,6 +1139,19 @@ const app = new Hono()
           throw new Error("published catalogue listing points at a missing catalogue import")
         }
         const manifest = parseCatalogueAppManifest(catalogueManifest)
+        if (
+          ["next", "hono", "web", "function", "static", "android"].includes(
+            manifest.deployment.preset,
+          )
+        ) {
+          listingDeploymentPreset = manifest.deployment.preset as DeploymentPreset
+          // Historical static/Android catalogue entries carry sentinel runtime strings even
+          // though neither target creates a Lambda function. They are import metadata, not a
+          // project runtime default.
+          if (manifest.deployment.preset !== "static" && manifest.deployment.preset !== "android") {
+            listingRuntime = manifest.deployment.runtime
+          }
+        }
         let resolvedInputs: ReturnType<typeof validateCatalogueUserInputs>
         try {
           resolvedInputs = validateCatalogueUserInputs(
@@ -1144,6 +1242,21 @@ const app = new Hono()
 
       const rootDir = json.rootDir ?? listingRootDir ?? "."
       const dockerfilePath = json.dockerfilePath ?? listingDockerfilePath ?? "Dockerfile"
+      const runtimeConfiguration = projectRuntimeConfiguration({
+        deploymentPreset:
+          json.deploymentPreset ??
+          listingDeploymentPreset ??
+          ((json.kind ?? "site") === "site" && !(json.isGroup ?? false) ? "next" : null),
+        runtime: json.runtime ?? listingRuntime,
+        handler: json.handler,
+        isGroup: json.isGroup ?? false,
+        kind: json.kind ?? "site",
+      })
+      if ("error" in runtimeConfiguration) {
+        return throwBadRequest(c, runtimeConfiguration.error, ErrorCode.ValidationFailed, {
+          target: runtimeConfiguration.target,
+        })
+      }
 
       /*
         A repository starts as a group, and the deployable project goes inside it.
@@ -1268,6 +1381,9 @@ const app = new Hono()
         kind: json.kind ?? "site",
         name: json.name,
         description: json.description ?? null,
+        deploymentPreset: runtimeConfiguration.deploymentPreset,
+        runtime: runtimeConfiguration.runtime,
+        handler: runtimeConfiguration.handler,
         organizationId: organization.id,
         productionBranch,
         dockerfilePath,
@@ -1608,6 +1724,47 @@ const app = new Hono()
         }
       }
 
+      const deploymentSettingsChanged =
+        json.deploymentPreset !== undefined ||
+        json.runtime !== undefined ||
+        json.handler !== undefined ||
+        json.isGroup !== undefined
+      const presetChanged =
+        json.deploymentPreset !== undefined && json.deploymentPreset !== before.deploymentPreset
+      const runtimeConfiguration = deploymentSettingsChanged
+        ? projectRuntimeConfiguration({
+            deploymentPreset:
+              json.isGroup === true
+                ? null
+                : json.deploymentPreset === undefined
+                  ? (before.deploymentPreset as DeploymentPreset | null)
+                  : json.deploymentPreset,
+            runtime:
+              json.isGroup === true
+                ? null
+                : json.runtime === undefined
+                  ? presetChanged
+                    ? null
+                    : before.runtime
+                  : json.runtime,
+            handler:
+              json.isGroup === true
+                ? null
+                : json.handler === undefined
+                  ? presetChanged
+                    ? null
+                    : before.handler
+                  : json.handler,
+            isGroup: json.isGroup ?? before.isGroup,
+            kind: before.kind,
+          })
+        : undefined
+      if (runtimeConfiguration !== undefined && "error" in runtimeConfiguration) {
+        return throwBadRequest(c, runtimeConfiguration.error, ErrorCode.ValidationFailed, {
+          target: runtimeConfiguration.target,
+        })
+      }
+
       /*
         A group cannot itself sit inside a group, for now.
 
@@ -1673,6 +1830,13 @@ const app = new Hono()
         const row = await crudProject(tx).update(organization.id, projectId, {
           ...(json.name === undefined ? {} : { name: json.name }),
           ...(json.description === undefined ? {} : { description: json.description }),
+          ...(runtimeConfiguration === undefined
+            ? {}
+            : {
+                deploymentPreset: runtimeConfiguration.deploymentPreset,
+                runtime: runtimeConfiguration.runtime,
+                handler: runtimeConfiguration.handler,
+              }),
           ...(json.region === undefined ? {} : { regionId: selectedRegion?.id }),
           ...(json.slug === undefined ? {} : { slug: json.slug }),
           ...(json.rootDir === undefined ? {} : { rootDir: json.rootDir }),
@@ -1712,6 +1876,9 @@ const app = new Hono()
             productionBranch: row.productionBranch,
             rootDir: row.rootDir,
             slug: row.slug,
+            deploymentPreset: row.deploymentPreset,
+            runtime: row.runtime,
+            handler: row.handler,
           },
           before: {
             autoUpdateEnabled: before.autoUpdateEnabled,
@@ -1721,6 +1888,9 @@ const app = new Hono()
             productionBranch: before.productionBranch,
             rootDir: before.rootDir,
             slug: before.slug,
+            deploymentPreset: before.deploymentPreset,
+            runtime: before.runtime,
+            handler: before.handler,
           },
           organizationId: organization.id,
           resourceSrn: srnFor("project", organization.id, "project", projectId),

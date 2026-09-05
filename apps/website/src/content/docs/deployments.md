@@ -17,18 +17,24 @@ build your source, and a deployment of one group child does not deploy its sibli
 - `next` packages a Next.js standalone server output.
 - `hono` packages a Hono application using the supported entrypoint contract.
 - `web` publishes a provided server runtime or adapter output.
+- `function` publishes a ZIP containing a direct Node, Python, Java, .NET, Ruby, or custom-runtime
+  handler.
 - `android` uploads one raw unsigned APK for the protected signing and distribution flow.
 
 Point `--path` or the Action's `directory` at the built output, not the source directory unless the
 preset explicitly expects it. Static assets are immutable deployment content; mutable uploads and
 user files belong in [object storage](/docs/object-storage).
 
+The project owns the normal preset/runtime/handler default. Explicit deploy options override it for
+one release, and the resolved values are recorded with that deployment. See
+[Runtimes and framework presets](/docs/runtimes).
+
 ## Deploy from a terminal
 
 ```shell
 sprout auth login
 sprout org use my-team
-sprout deploy my-site --preset next --path .next/standalone
+sprout deploy my-site --preset next --runtime nodejs24.x --path .next/standalone
 sprout deployment list my-site
 sprout logs my-site
 ```
@@ -67,3 +73,6 @@ After a ready result:
 Build failures and runtime failures are reported separately. A build failure means the artifact or
 image could not be prepared. A runtime failure means the build completed but the application did
 not start or serve correctly.
+
+Runtime selection does not rebuild the artifact. Native dependencies must target Linux arm64, and
+the CI toolchain should match the selected SproutOS runtime.

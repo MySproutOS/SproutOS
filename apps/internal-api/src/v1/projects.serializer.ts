@@ -52,6 +52,14 @@ const AutoUpdateCadence = Type.Union([
   Type.Literal("two_years"),
 ])
 const ScaleMode = Type.Union([Type.Literal("cold"), Type.Literal("warm")])
+const DeploymentPreset = Type.Union([
+  Type.Literal("next"),
+  Type.Literal("hono"),
+  Type.Literal("web"),
+  Type.Literal("function"),
+  Type.Literal("static"),
+  Type.Literal("android"),
+])
 const EnvTarget = Type.Union([
   Type.Literal("production"),
   Type.Literal("preview"),
@@ -120,6 +128,9 @@ export const projectSchemaCreateRequest = Type.Object({
   region: Type.String({ minLength: 1, maxLength: 64 }),
   slug: Type.Optional(Type.String({ minLength: 1, maxLength: 63 })),
   kind: Type.Optional(ProjectKind),
+  deploymentPreset: Type.Optional(Nullable(DeploymentPreset)),
+  runtime: Type.Optional(Nullable(Type.String({ minLength: 1 }))),
+  handler: Type.Optional(Nullable(Type.String({ minLength: 1, maxLength: 512 }))),
   rootDir: Type.Optional(Type.String({ minLength: 1, maxLength: 255 })),
   /** Relative to `rootDir`. Left out on a store fork, the listing's value is used. */
   dockerfilePath: Type.Optional(
@@ -160,6 +171,9 @@ export const projectSchemaCreateRequest = Type.Object({
 export const projectSchemaUpdateRequest = Type.Object({
   name: Type.Optional(Type.String({ minLength: 1, maxLength: 120 })),
   description: Type.Optional(Nullable(Type.String({ maxLength: 2000 }))),
+  deploymentPreset: Type.Optional(Nullable(DeploymentPreset)),
+  runtime: Type.Optional(Nullable(Type.String({ minLength: 1 }))),
+  handler: Type.Optional(Nullable(Type.String({ minLength: 1, maxLength: 512 }))),
   region: Type.Optional(Type.String({ minLength: 1, maxLength: 64 })),
   slug: Type.Optional(Type.String({ minLength: 1, maxLength: 63 })),
   rootDir: Type.Optional(Type.String({ minLength: 1, maxLength: 255 })),
@@ -202,6 +216,9 @@ const projectEntry = Type.Object({
   id: UUID7String,
   name: Type.String(),
   description: Nullable(Type.String()),
+  deploymentPreset: Nullable(Type.String()),
+  runtime: Nullable(Type.String()),
+  handler: Nullable(Type.String()),
   slug: Type.String(),
   kind: Type.String(),
   state: Type.String(),

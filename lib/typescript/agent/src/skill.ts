@@ -280,11 +280,16 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       # Build first. The action uploads finished output; it does not guess how this app builds.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
       - run: npm ci
       - run: npm run build
       - uses: MySproutOS/sproutos-deploy-action@0d5ce8bb74ecd598ae996c34d7d2cb5ac156a180
         with:
-          preset: next            # next | hono | web | static | android
+          preset: next            # next | hono | web | function | static | android
+          runtime: nodejs24.x
+          handler: run.sh
           directory: apps/website/.next/standalone
           project: ${project}
           api-url: ${input.apiUrl}

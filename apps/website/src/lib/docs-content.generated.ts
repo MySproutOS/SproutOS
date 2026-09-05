@@ -1528,7 +1528,7 @@ export const GENERATED_DOC_CONTENT: Record<string, RenderableTreeNode[]> = {
         language: "shell",
       },
       children: [
-        "sprout region list\nsprout project create --name my-site --region us-east-1 --blank\nsprout project get my-site\n",
+        "sprout region list\nsprout runtime list\nsprout project create --name my-site --region us-east-1 --blank \\\n  --preset next --runtime nodejs24.x\nsprout project get my-site\n",
       ],
     },
     {
@@ -1825,7 +1825,7 @@ export const GENERATED_DOC_CONTENT: Record<string, RenderableTreeNode[]> = {
         language: "shell",
       },
       children: [
-        "sprout deploy my-site --preset next --path .next/standalone\nsprout deployment list my-site\nsprout logs my-site\n",
+        "sprout deploy my-site --preset next --runtime nodejs24.x --path .next/standalone\nsprout deployment list my-site\nsprout logs my-site\n",
       ],
     },
     {
@@ -1863,12 +1863,27 @@ export const GENERATED_DOC_CONTENT: Record<string, RenderableTreeNode[]> = {
           attributes: {},
           children: ["hono"],
         },
-        ", and ",
+        ", ",
+        {
+          $$mdtype: "Tag",
+          name: "code",
+          attributes: {},
+          children: ["function"],
+        },
+        ", and",
+        " ",
         {
           $$mdtype: "Tag",
           name: "code",
           attributes: {},
           children: ["android"],
+        },
+        ". A direct function also requires ",
+        {
+          $$mdtype: "Tag",
+          name: "code",
+          attributes: {},
+          children: ["--handler"],
         },
         ". Preview",
         " ",
@@ -1921,6 +1936,25 @@ export const GENERATED_DOC_CONTENT: Record<string, RenderableTreeNode[]> = {
             href: "/docs/android-distribution",
           },
           children: ["Distribute Android apps"],
+        },
+        ".",
+      ],
+    },
+    {
+      $$mdtype: "Tag",
+      name: "p",
+      attributes: {},
+      children: [
+        "Project runtime settings supply the normal default; deploy flags override one release without",
+        " ",
+        "changing it. See ",
+        {
+          $$mdtype: "Tag",
+          name: "DocLink",
+          attributes: {
+            href: "/docs/runtimes",
+          },
+          children: ["Runtimes and framework presets"],
         },
         ".",
       ],
@@ -2778,7 +2812,7 @@ export const GENERATED_DOC_CONTENT: Record<string, RenderableTreeNode[]> = {
         language: "yaml",
       },
       children: [
-        "name: Migrate and deploy to SproutOS\non:\n  push:\n    branches: [main]\n\npermissions:\n  contents: read\n  id-token: write\n\njobs:\n  migrate:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v5\n      - uses: actions/setup-node@v4\n        with:\n          node-version: 22\n      - run: npm ci\n      - run: npm run build:migrator\n      - uses: MySproutOS/sproutos-deploy-action@0d5ce8bb74ecd598ae996c34d7d2cb5ac156a180\n        with:\n          preset: hono\n          directory: apps/migrator/dist\n          project: my-app-migrator\n          migration-directory: apps/migrator/dist\n          migration-handler: migrate.handler\n          api-url: https://api.sproutos.me\n\n  deploy-web:\n    needs: migrate\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v5\n      - uses: actions/setup-node@v4\n        with:\n          node-version: 22\n      - run: npm ci\n      - run: npm run build\n      - uses: MySproutOS/sproutos-deploy-action@0d5ce8bb74ecd598ae996c34d7d2cb5ac156a180\n        with:\n          preset: next\n          directory: apps/website/.next/standalone\n          project: my-app-web\n          api-url: https://api.sproutos.me\n",
+        "name: Migrate and deploy to SproutOS\non:\n  push:\n    branches: [main]\n\npermissions:\n  contents: read\n  id-token: write\n\njobs:\n  migrate:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v5\n      - uses: actions/setup-node@v4\n        with:\n          node-version: 24\n      - run: npm ci\n      - run: npm run build:migrator\n      - uses: MySproutOS/sproutos-deploy-action@0d5ce8bb74ecd598ae996c34d7d2cb5ac156a180\n        with:\n          preset: hono\n          runtime: nodejs24.x\n          handler: run.sh\n          directory: apps/migrator/dist\n          project: my-app-migrator\n          migration-directory: apps/migrator/dist\n          migration-handler: migrate.handler\n          api-url: https://api.sproutos.me\n\n  deploy-web:\n    needs: migrate\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v5\n      - uses: actions/setup-node@v4\n        with:\n          node-version: 24\n      - run: npm ci\n      - run: npm run build\n      - uses: MySproutOS/sproutos-deploy-action@0d5ce8bb74ecd598ae996c34d7d2cb5ac156a180\n        with:\n          preset: next\n          runtime: nodejs24.x\n          handler: run.sh\n          directory: apps/website/.next/standalone\n          project: my-app-web\n          api-url: https://api.sproutos.me\n",
       ],
     },
     {
@@ -2862,7 +2896,7 @@ export const GENERATED_DOC_CONTENT: Record<string, RenderableTreeNode[]> = {
         language: "yaml",
       },
       children: [
-        "jobs:\n  migrate:\n    runs-on: ubuntu-latest\n    env:\n      DATABASE_URL: ${{ secrets.PRODUCTION_DATABASE_URL }}\n    steps:\n      - uses: actions/checkout@v5\n      - uses: actions/setup-node@v4\n        with:\n          node-version: 22\n      - run: npm ci\n      - run: npm run migrate\n\n  deploy-web:\n    needs: migrate\n    # Build and deploy the application here.\n",
+        "jobs:\n  migrate:\n    runs-on: ubuntu-latest\n    env:\n      DATABASE_URL: ${{ secrets.PRODUCTION_DATABASE_URL }}\n    steps:\n      - uses: actions/checkout@v5\n      - uses: actions/setup-node@v4\n        with:\n          node-version: 24\n      - run: npm ci\n      - run: npm run migrate\n\n  deploy-web:\n    needs: migrate\n    # Build and deploy the application here.\n",
       ],
     },
     {
@@ -3041,6 +3075,22 @@ export const GENERATED_DOC_CONTENT: Record<string, RenderableTreeNode[]> = {
               $$mdtype: "Tag",
               name: "code",
               attributes: {},
+              children: ["function"],
+            },
+            " publishes a ZIP containing a direct Node, Python, Java, .NET, Ruby, or custom-runtime",
+            " ",
+            "handler.",
+          ],
+        },
+        {
+          $$mdtype: "Tag",
+          name: "li",
+          attributes: {},
+          children: [
+            {
+              $$mdtype: "Tag",
+              name: "code",
+              attributes: {},
               children: ["android"],
             },
             " uploads one raw unsigned APK for the protected signing and distribution flow.",
@@ -3085,6 +3135,26 @@ export const GENERATED_DOC_CONTENT: Record<string, RenderableTreeNode[]> = {
     },
     {
       $$mdtype: "Tag",
+      name: "p",
+      attributes: {},
+      children: [
+        "The project owns the normal preset/runtime/handler default. Explicit deploy options override it for",
+        " ",
+        "one release, and the resolved values are recorded with that deployment. See",
+        " ",
+        {
+          $$mdtype: "Tag",
+          name: "DocLink",
+          attributes: {
+            href: "/docs/runtimes",
+          },
+          children: ["Runtimes and framework presets"],
+        },
+        ".",
+      ],
+    },
+    {
+      $$mdtype: "Tag",
       name: "Heading",
       attributes: {
         level: 2,
@@ -3099,7 +3169,7 @@ export const GENERATED_DOC_CONTENT: Record<string, RenderableTreeNode[]> = {
         language: "shell",
       },
       children: [
-        "sprout auth login\nsprout org use my-team\nsprout deploy my-site --preset next --path .next/standalone\nsprout deployment list my-site\nsprout logs my-site\n",
+        "sprout auth login\nsprout org use my-team\nsprout deploy my-site --preset next --runtime nodejs24.x --path .next/standalone\nsprout deployment list my-site\nsprout logs my-site\n",
       ],
     },
     {
@@ -3264,6 +3334,16 @@ export const GENERATED_DOC_CONTENT: Record<string, RenderableTreeNode[]> = {
         "image could not be prepared. A runtime failure means the build completed but the application did",
         " ",
         "not start or serve correctly.",
+      ],
+    },
+    {
+      $$mdtype: "Tag",
+      name: "p",
+      attributes: {},
+      children: [
+        "Runtime selection does not rebuild the artifact. Native dependencies must target Linux arm64, and",
+        " ",
+        "the CI toolchain should match the selected SproutOS runtime.",
       ],
     },
   ],
@@ -3786,7 +3866,7 @@ export const GENERATED_DOC_CONTENT: Record<string, RenderableTreeNode[]> = {
         language: "yaml",
       },
       children: [
-        "name: Deploy to SproutOS\non:\n  push:\n    branches: [main]\n\npermissions:\n  contents: read\n  id-token: write\n\njobs:\n  deploy:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v5\n      - uses: actions/setup-node@v4\n        with:\n          node-version: 22\n      - run: npm ci\n      - run: npm run build\n      - uses: MySproutOS/sproutos-deploy-action@0d5ce8bb74ecd598ae996c34d7d2cb5ac156a180\n        with:\n          preset: next\n          directory: apps/website/.next/standalone\n          project: my-web-project\n          api-url: https://api.sproutos.me\n",
+        "name: Deploy to SproutOS\non:\n  push:\n    branches: [main]\n\npermissions:\n  contents: read\n  id-token: write\n\njobs:\n  deploy:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v5\n      - uses: actions/setup-node@v4\n        with:\n          node-version: 24\n      - run: npm ci\n      - run: npm run build\n      - uses: MySproutOS/sproutos-deploy-action@0d5ce8bb74ecd598ae996c34d7d2cb5ac156a180\n        with:\n          preset: next\n          runtime: nodejs24.x\n          handler: run.sh\n          directory: apps/website/.next/standalone\n          project: my-web-project\n          api-url: https://api.sproutos.me\n",
       ],
     },
     {
@@ -3833,6 +3913,13 @@ export const GENERATED_DOC_CONTENT: Record<string, RenderableTreeNode[]> = {
           name: "code",
           attributes: {},
           children: ["web"],
+        },
+        ", ",
+        {
+          $$mdtype: "Tag",
+          name: "code",
+          attributes: {},
+          children: ["function"],
         },
         ", ",
         {
@@ -3955,7 +4042,7 @@ export const GENERATED_DOC_CONTENT: Record<string, RenderableTreeNode[]> = {
         language: "shell",
       },
       children: [
-        "sprout auth login\nsprout org use my-team\nsprout deploy my-web-project --preset next \\\n  --path apps/website/.next/standalone\n",
+        "sprout auth login\nsprout org use my-team\nsprout deploy my-web-project --preset next \\\n  --runtime nodejs24.x --handler run.sh \\\n  --path apps/website/.next/standalone\n",
       ],
     },
     {
@@ -4081,6 +4168,27 @@ export const GENERATED_DOC_CONTENT: Record<string, RenderableTreeNode[]> = {
         " command and resources it creates on SproutOS remain",
         " ",
         "metered normally.",
+      ],
+    },
+    {
+      $$mdtype: "Tag",
+      name: "p",
+      attributes: {},
+      children: [
+        "The build toolchain and deployed runtime are separate settings. Set both explicitly in repeatable",
+        " ",
+        "workflows. Runtime selection does not rebuild native dependencies; the uploaded package must",
+        " ",
+        "already target Linux arm64. See ",
+        {
+          $$mdtype: "Tag",
+          name: "DocLink",
+          attributes: {
+            href: "/docs/runtimes",
+          },
+          children: ["Runtimes and framework presets"],
+        },
+        ".",
       ],
     },
     {
@@ -5767,14 +5875,16 @@ export const GENERATED_DOC_CONTENT: Record<string, RenderableTreeNode[]> = {
       children: [
         "Each child has its own root directory, deployment history, environment variables, logs, attached",
         " ",
-        "services, and runtime. A release of ",
+        "services, framework preset, runtime, and handler contract. A release of ",
         {
           $$mdtype: "Tag",
           name: "code",
           attributes: {},
           children: ["web"],
         },
-        " does not implicitly release ",
+        " does not implicitly",
+        " ",
+        "release ",
         {
           $$mdtype: "Tag",
           name: "code",
@@ -5788,7 +5898,7 @@ export const GENERATED_DOC_CONTENT: Record<string, RenderableTreeNode[]> = {
           attributes: {},
           children: ["worker"],
         },
-        ".",
+        ", and groups do not supply inherited runtime settings.",
       ],
     },
     {
@@ -6267,7 +6377,7 @@ export const GENERATED_DOC_CONTENT: Record<string, RenderableTreeNode[]> = {
         language: "shell",
       },
       children: [
-        "sprout auth login\nsprout org use my-team\nsprout deploy my-site --preset next --path .next/standalone\n",
+        "sprout auth login\nsprout org use my-team\nsprout deploy my-site --preset next --runtime nodejs24.x --path .next/standalone\n",
       ],
     },
     {
@@ -6638,6 +6748,267 @@ export const GENERATED_DOC_CONTENT: Record<string, RenderableTreeNode[]> = {
         "Production database migrations are still a separate CI dependency. An Agent sandbox test or",
         " ",
         "successful workflow deployment does not migrate the production database.",
+      ],
+    },
+  ],
+  runtimes: [
+    {
+      $$mdtype: "Tag",
+      name: "p",
+      attributes: {},
+      children: [
+        "Every Lambda-backed SproutOS project owns a framework preset and runtime default. Project creation",
+        " ",
+        "shows the recommended combination—Node.js 24 for a new Next.js, Hono, or Node Function project,",
+        " ",
+        "and ",
+        {
+          $$mdtype: "Tag",
+          name: "code",
+          attributes: {},
+          children: ["provided.al2023"],
+        },
+        " for a generic Web executable—and lets you change it before creating the",
+        " ",
+        "project. Changes in ",
+        {
+          $$mdtype: "Tag",
+          name: "strong",
+          attributes: {},
+          children: ["Modify"],
+        },
+        " apply only to future deployments.",
+      ],
+    },
+    {
+      $$mdtype: "Tag",
+      name: "p",
+      attributes: {},
+      children: [
+        "Run ",
+        {
+          $$mdtype: "Tag",
+          name: "code",
+          attributes: {},
+          children: ["sprout runtime list"],
+        },
+        " for the live catalogue. The dashboard groups versions by language and",
+        " ",
+        "shows the underlying Amazon Linux generation when it affects compatibility or lifecycle.",
+      ],
+    },
+    {
+      $$mdtype: "Tag",
+      name: "Heading",
+      attributes: {
+        level: 2,
+        id: "choose-an-execution-contract",
+      },
+      children: ["Choose an execution contract"],
+    },
+    {
+      $$mdtype: "Tag",
+      name: "ul",
+      attributes: {},
+      children: [
+        {
+          $$mdtype: "Tag",
+          name: "li",
+          attributes: {},
+          children: [
+            {
+              $$mdtype: "Tag",
+              name: "code",
+              attributes: {},
+              children: ["next"],
+            },
+            " and ",
+            {
+              $$mdtype: "Tag",
+              name: "code",
+              attributes: {},
+              children: ["hono"],
+            },
+            " run Node.js HTTP servers through Lambda Web Adapter.",
+          ],
+        },
+        {
+          $$mdtype: "Tag",
+          name: "li",
+          attributes: {},
+          children: [
+            {
+              $$mdtype: "Tag",
+              name: "code",
+              attributes: {},
+              children: ["web"],
+            },
+            " runs an executable ",
+            {
+              $$mdtype: "Tag",
+              name: "code",
+              attributes: {},
+              children: ["run.sh"],
+            },
+            " HTTP server through Lambda Web Adapter on any compatible ZIP",
+            " ",
+            "runtime. SproutOS supplies the custom-runtime ",
+            {
+              $$mdtype: "Tag",
+              name: "code",
+              attributes: {},
+              children: ["bootstrap"],
+            },
+            " bridge.",
+          ],
+        },
+        {
+          $$mdtype: "Tag",
+          name: "li",
+          attributes: {},
+          children: [
+            {
+              $$mdtype: "Tag",
+              name: "code",
+              attributes: {},
+              children: ["function"],
+            },
+            " invokes a Lambda handler directly. Set the handler exported by the finished package,",
+            " ",
+            "such as ",
+            {
+              $$mdtype: "Tag",
+              name: "code",
+              attributes: {},
+              children: ["index.handler"],
+            },
+            "; Node.js 24 handlers must be async and cannot use callback-style handlers.",
+          ],
+        },
+        {
+          $$mdtype: "Tag",
+          name: "li",
+          attributes: {},
+          children: [
+            {
+              $$mdtype: "Tag",
+              name: "code",
+              attributes: {},
+              children: ["static"],
+            },
+            " publishes immutable files at the edge and has no Lambda runtime.",
+          ],
+        },
+        {
+          $$mdtype: "Tag",
+          name: "li",
+          attributes: {},
+          children: [
+            {
+              $$mdtype: "Tag",
+              name: "code",
+              attributes: {},
+              children: ["android"],
+            },
+            " uploads an APK for signing and distribution and has no Lambda runtime.",
+          ],
+        },
+      ],
+    },
+    {
+      $$mdtype: "Tag",
+      name: "p",
+      attributes: {},
+      children: [
+        "Groups and repository workflow projects do not inherit a Lambda runtime. In a monorepo, configure",
+        " ",
+        "the website, API, and each other deployable child independently.",
+      ],
+    },
+    {
+      $$mdtype: "Tag",
+      name: "Heading",
+      attributes: {
+        level: 2,
+        id: "defaults-overrides-and-rollback",
+      },
+      children: ["Defaults, overrides, and rollback"],
+    },
+    {
+      $$mdtype: "Tag",
+      name: "p",
+      attributes: {},
+      children: [
+        "The project setting is the normal default. ",
+        {
+          $$mdtype: "Tag",
+          name: "code",
+          attributes: {},
+          children: ["sprout deploy --runtime ... --handler ..."],
+        },
+        " and the",
+        " ",
+        "equivalent GitHub Action inputs override it for one release; they do not edit the project. There is",
+        " ",
+        "no checked-in SproutOS runtime configuration file.",
+      ],
+    },
+    {
+      $$mdtype: "Tag",
+      name: "p",
+      attributes: {},
+      children: [
+        "Every deployment records its resolved preset, runtime, and handler. Changing project settings does",
+        " ",
+        "not rewrite an existing deployment, and rollback restores the old deployment without rebuilding or",
+        " ",
+        "substituting today’s runtime.",
+      ],
+    },
+    {
+      $$mdtype: "Tag",
+      name: "Heading",
+      attributes: {
+        level: 2,
+        id: "build-for-the-runtime",
+      },
+      children: ["Build for the runtime"],
+    },
+    {
+      $$mdtype: "Tag",
+      name: "p",
+      attributes: {},
+      children: [
+        "SproutOS uploads a finished artifact; runtime selection does not reinstall or rebuild dependencies.",
+        " ",
+        "Set the CI build toolchain separately and use the same language version you selected for SproutOS.",
+        " ",
+        "Customer Lambda functions run on Linux ",
+        {
+          $$mdtype: "Tag",
+          name: "code",
+          attributes: {},
+          children: ["arm64"],
+        },
+        ", so native packages and compiled binaries must",
+        " ",
+        "target that architecture.",
+      ],
+    },
+    {
+      $$mdtype: "Tag",
+      name: "p",
+      attributes: {},
+      children: [
+        "AWS applies compatible patch updates inside a managed runtime identifier. Moving between major",
+        " ",
+        "runtime identifiers remains your application upgrade. The catalogue shows deprecation and",
+        " ",
+        "selection cutoff dates; a runtime can remain selectable with a warning during a transition, but",
+        " ",
+        "disabled identifiers are rejected for new deployments. Previously published versions remain valid",
+        " ",
+        "rollback targets.",
       ],
     },
   ],

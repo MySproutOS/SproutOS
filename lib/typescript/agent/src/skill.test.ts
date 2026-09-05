@@ -171,6 +171,9 @@ describe("the public skill", () => {
       "MySproutOS/sproutos-deploy-action@0d5ce8bb74ecd598ae996c34d7d2cb5ac156a180",
     )
     expect(body).not.toContain("sproutos-deploy-action@v1")
+    expect(body).toContain("node-version: 24")
+    expect(body).toContain("runtime: nodejs24.x")
+    expect(body).toContain("handler: run.sh")
     expect(body).toContain("AGENTS.md-only harness")
     expect(body).toContain(".agents/skills/sproutos/SKILL.md")
     expect(body).toContain("~/.agents/skills/sproutos/SKILL.md")

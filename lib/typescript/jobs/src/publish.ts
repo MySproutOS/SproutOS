@@ -1,4 +1,4 @@
-import { DeleteAliasCommand, LambdaClient } from "@aws-sdk/client-lambda"
+import { DeleteAliasCommand, LambdaClient, type Runtime } from "@aws-sdk/client-lambda"
 import { CloudFrontKeyValueStoreClient } from "@aws-sdk/client-cloudfront-keyvaluestore"
 import { Route53Client } from "@aws-sdk/client-route-53"
 import { S3Client } from "@aws-sdk/client-s3"
@@ -15,7 +15,6 @@ import {
   DEFAULT_RUNTIME,
   functionName,
   hostLabel,
-  isSupportedRuntime,
   logEndpointFor,
   pointAlias,
   publishFunction,
@@ -733,10 +732,7 @@ export function publishRelease(options?: PublishOptions): JobHandler {
                       "sproutos-dev-artifacts",
                     key: migrationArtifactKey,
                     handler: deployment.migrationHandler ?? deployment.handler ?? DEFAULT_HANDLER,
-                    runtime:
-                      deployment.runtime !== null && isSupportedRuntime(deployment.runtime)
-                        ? deployment.runtime
-                        : DEFAULT_RUNTIME,
+                    runtime: (deployment.runtime ?? DEFAULT_RUNTIME) as Runtime,
                     roleArn: options?.roleArn ?? process.env.LAMBDA_EXECUTION_ROLE_ARN ?? "",
                     environment,
                   }),
@@ -810,15 +806,11 @@ export function publishRelease(options?: PublishOptions): JobHandler {
 
         These were hardcoded, which pinned every customer to one Node version and gave every
         project the same entry point. The row carries what the release asked for; the fallbacks are
-        for rows written before the columns existed, and `isSupportedRuntime` guards against a value
-        that was valid when it was stored and has since left the allowlist — Lambda would reject it
-        anyway, and doing so here says which field was wrong.
+        only for rows written before the columns existed. A retired runtime on an immutable
+        historical deployment remains authoritative so rollback never changes its contract.
       */
             handler: deployment.handler ?? DEFAULT_HANDLER,
-            runtime:
-              deployment.runtime !== null && isSupportedRuntime(deployment.runtime)
-                ? deployment.runtime
-                : DEFAULT_RUNTIME,
+            runtime: (deployment.runtime ?? DEFAULT_RUNTIME) as Runtime,
             memoryMb: deployment.memoryMb > 0 ? deployment.memoryMb : DEFAULT_MEMORY_MB,
             timeoutS: deployment.maxDurationS > 0 ? deployment.maxDurationS : DEFAULT_TIMEOUT_S,
             roleArn: options?.roleArn ?? process.env.LAMBDA_EXECUTION_ROLE_ARN ?? "",

@@ -24,7 +24,8 @@ product (group; deploys nothing)
 ```
 
 Each child has its own root directory, deployment history, environment variables, logs, attached
-services, and runtime. A release of `web` does not implicitly release `api` or `worker`.
+services, framework preset, runtime, and handler contract. A release of `web` does not implicitly
+release `api` or `worker`, and groups do not supply inherited runtime settings.
 
 ## Choose the primary child
 
