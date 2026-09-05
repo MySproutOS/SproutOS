@@ -67,10 +67,9 @@ function plainText(
     /*
       Link targets are content here, not markup.
 
-      The one release tag a reader is most likely to search for — `cli-v0.2.1` — appears only inside
-      a URL, and the old index included it by accident because it searched the raw Markdown. Pulling
-      `href` out deliberately keeps that findable now that the index is built from the tree, where
-      attributes are not children.
+      Some release and installation terms appear only inside URLs, and the old index included them
+      by accident because it searched the raw Markdown. Pulling `href` out deliberately keeps those
+      terms findable now that the index is built from the tree, where attributes are not children.
     */
     const href: unknown = node.attributes.href
     if (typeof href === "string") parts.push(href)

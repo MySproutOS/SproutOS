@@ -1,25 +1,36 @@
 ---
 slug: cli
 title: Use the SproutOS CLI
-summary: Install v0.2.1, sign in, choose an organization and region, create projects, configure services, and deploy.
+summary: Install the latest production-approved CLI, sign in, create projects, configure services, and deploy.
 audience: user
 category: Getting started
 order: 2
 ---
 
-The `sprout` CLI is the command-line client for SproutOS. Version 0.2.1 is the current release. It
-uses the same project and deployment contract as the dashboard and the GitHub Action.
+The `sprout` CLI is the command-line client for SproutOS. It uses the same project and deployment
+contract as the dashboard and the GitHub Action.
 
 ## Install and verify the CLI
 
-Download the archive for macOS, Linux, or Windows from the [SproutOS CLI v0.2.1
-release](https://github.com/MySproutOS/SproutOS/releases/tag/cli-v0.2.1). The release includes
-`SHA256SUMS` and `sprout-v0.2.1-manifest.json`; verify the archive against both files before running
-it. Then check the installed version:
+On macOS or Linux, install the latest production-approved release without `sudo`:
+
+```shell
+curl --proto '=https' --tlsv1.2 -fsSL https://sproutos.me/install.sh | bash
+```
+
+The installer detects the operating system and architecture, downloads the exact immutable GitHub
+release selected by SproutOS production, verifies its SHA-256 digest, and installs `sprout` in
+`~/.local/bin`. Set `SPROUT_INSTALL_DIR` to choose another directory.
+
+For Windows, or to inspect and verify the files yourself, use the direct macOS, Linux, and Windows
+downloads on the [SproutOS download page](/download#sprout-cli). Each promoted release includes
+`SHA256SUMS` and a versioned manifest alongside its five platform archives.
+
+Then check the installed version:
 
 ```shell
 sprout --version
-# sprout 0.2.1
+# sprout <version>
 ```
 
 ## Sign in and choose an organization
@@ -179,5 +190,5 @@ sprout --json --yes project delete my-site
 ```
 
 Run `sprout --help` or `sprout <command> --help` for the complete current flag set. The command
-groups in v0.2.1 are `auth`, `org`, `region`, `project`, `env`, `service`, `deploy`, `deployment`,
+groups are `auth`, `org`, `region`, `runtime`, `project`, `env`, `service`, `deploy`, `deployment`,
 `logs`, `android`, `api`, and `template`.
