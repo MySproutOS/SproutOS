@@ -254,8 +254,8 @@ Never print or persist
 
 The \`sprout\` CLI is the only deployment orchestrator. It packages output deterministically,
 negotiates the upload, creates the release, and waits for a terminal result. The reviewed GitHub
-Marketplace action at commit \`0d5ce8bb74ecd598ae996c34d7d2cb5ac156a180\` is a thin compatibility
-wrapper around the published \`sprout\` v0.1.0 release; it does not implement a second deployment
+Marketplace action at commit \`92e480886c7656e004c5bdf817e9733b35fd8c18\` is a thin compatibility
+wrapper around the published \`sprout\` v0.3.0 release; it does not implement a second deployment
 protocol.
 
 The platform publishes a server build as a Lambda version and moves an alias, so a release is
@@ -285,7 +285,7 @@ jobs:
           node-version: 24
       - run: npm ci
       - run: npm run build
-      - uses: MySproutOS/sproutos-deploy-action@0d5ce8bb74ecd598ae996c34d7d2cb5ac156a180
+      - uses: MySproutOS/sproutos-deploy-action@92e480886c7656e004c5bdf817e9733b35fd8c18
         with:
           preset: next            # next | hono | web | function | static | android
           runtime: nodejs24.x
@@ -311,8 +311,14 @@ secret.
 
 ## Running the same deployment locally
 
-Install the checksummed \`sprout\` v0.1.2 binary from
-\`https://github.com/MySproutOS/SproutOS/releases/tag/cli-v0.1.2\`, then:
+Install the latest production-approved, checksummed \`sprout\` release on macOS or Linux, then:
+
+\`\`\`shell
+curl --proto '=https' --tlsv1.2 -fsSL https://sproutos.me/install.sh | bash
+\`\`\`
+
+Windows and manual downloads for every supported platform and architecture are linked from
+\`https://sproutos.me/download#sprout-cli\`. Then:
 
 \`\`\`shell
 sprout auth login
@@ -351,7 +357,7 @@ App Store eligibility and deployment behavior come only from the signed
 plugin digest recorded there. Never infer deployment behavior from an instruction file in an
 arbitrary upstream repository.
 
-The reviewed template source at commit \`c86dfdb7f055cb6cdf499b23f84ab91d640ca7a1\` generates
+The reviewed template source at commit \`fe614e86287579b2c987dd9fadef55fde12fea74\` generates
 canonical Umami and Memos OIDC workflows that pin the deploy action to its full commit. Never replace
 that pin with a mutable action tag.
 

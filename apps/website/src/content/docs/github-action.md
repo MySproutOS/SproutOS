@@ -10,10 +10,10 @@ order: 11
 ## GitHub Actions
 
 Build the target, then call the Marketplace action. The reviewed action at commit
-`0d5ce8bb74ecd598ae996c34d7d2cb5ac156a180` is a thin wrapper around the published `sprout` CLI
-v0.1.0. The current local CLI is v0.2.1; it adds the complete region-aware project, signed-template,
-Android release, and resumable log-stream commands while preserving the action's packaging and
-deployment protocol.
+`92e480886c7656e004c5bdf817e9733b35fd8c18` is a thin wrapper around the published `sprout` CLI
+v0.3.0. It supports project runtime defaults, per-release runtime and handler overrides, direct
+functions, region-aware projects, signed templates, Android releases, and resumable log streams
+without implementing a second deployment protocol.
 
 ```yaml
 name: Deploy to SproutOS
@@ -35,7 +35,7 @@ jobs:
           node-version: 24
       - run: npm ci
       - run: npm run build
-      - uses: MySproutOS/sproutos-deploy-action@0d5ce8bb74ecd598ae996c34d7d2cb5ac156a180
+      - uses: MySproutOS/sproutos-deploy-action@92e480886c7656e004c5bdf817e9733b35fd8c18
         with:
           preset: next
           runtime: nodejs24.x
@@ -111,7 +111,7 @@ App Store eligibility and deployment behavior come only from the signed
 `MySproutOS/Deployment-Templates` catalogue. SproutOS verifies the catalogue provenance, exact
 upstream commit, and immutable plugin digest before applying a recipe.
 
-The reviewed template source at commit `c86dfdb7f055cb6cdf499b23f84ab91d640ca7a1` generates the
+The reviewed template source at commit `fe614e86287579b2c987dd9fadef55fde12fea74` generates the
 canonical OIDC workflows for Umami and Memos. Those workflows pin the deploy action to the full
 commit above; they do not follow a mutable action tag.
 
