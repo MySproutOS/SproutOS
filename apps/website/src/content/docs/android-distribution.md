@@ -85,7 +85,7 @@ jobs:
           java-version: "21"
       - uses: gradle/actions/setup-gradle@v4
       - run: ./gradlew assembleRelease
-      - uses: MySproutOS/sproutos-deploy-action@92e480886c7656e004c5bdf817e9733b35fd8c18
+      - uses: MySproutOS/sproutos-deploy-action@25101dae5786e419cc672da44ed7a788342185da
         with:
           preset: android
           directory: app/build/outputs/apk/release
