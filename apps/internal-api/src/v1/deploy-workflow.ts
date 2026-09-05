@@ -95,7 +95,7 @@ jobs:
       - run: npm ci
       - run: npm run build
 
-      - uses: MySproutOS/sproutos-deploy-action@v1
+      - uses: MySproutOS/sproutos-deploy-action@92e480886c7656e004c5bdf817e9733b35fd8c18
         with:
           preset: ${preset}
           runtime: nodejs24.x

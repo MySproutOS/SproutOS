@@ -647,7 +647,7 @@ export const GENERATED_DOC_CONTENT: Record<string, RenderableTreeNode[]> = {
         language: "yaml",
       },
       children: [
-        'name: Publish Android app\non:\n  push:\n    tags: ["android-v*"]\n\npermissions:\n  contents: read\n  id-token: write\n\njobs:\n  publish:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v5\n      - uses: actions/setup-java@v4\n        with:\n          distribution: temurin\n          java-version: "21"\n      - uses: gradle/actions/setup-gradle@v4\n      - run: ./gradlew assembleRelease\n      - uses: MySproutOS/sproutos-deploy-action@0d5ce8bb74ecd598ae996c34d7d2cb5ac156a180\n        with:\n          preset: android\n          directory: app/build/outputs/apk/release\n          project: my-android-app\n          api-url: https://api.sproutos.me\n',
+        'name: Publish Android app\non:\n  push:\n    tags: ["android-v*"]\n\npermissions:\n  contents: read\n  id-token: write\n\njobs:\n  publish:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v5\n      - uses: actions/setup-java@v4\n        with:\n          distribution: temurin\n          java-version: "21"\n      - uses: gradle/actions/setup-gradle@v4\n      - run: ./gradlew assembleRelease\n      - uses: MySproutOS/sproutos-deploy-action@92e480886c7656e004c5bdf817e9733b35fd8c18\n        with:\n          preset: android\n          directory: app/build/outputs/apk/release\n          project: my-android-app\n          api-url: https://api.sproutos.me\n',
       ],
     },
     {
@@ -2873,7 +2873,7 @@ export const GENERATED_DOC_CONTENT: Record<string, RenderableTreeNode[]> = {
         language: "yaml",
       },
       children: [
-        "name: Migrate and deploy to SproutOS\non:\n  push:\n    branches: [main]\n\npermissions:\n  contents: read\n  id-token: write\n\njobs:\n  migrate:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v5\n      - uses: actions/setup-node@v4\n        with:\n          node-version: 24\n      - run: npm ci\n      - run: npm run build:migrator\n      - uses: MySproutOS/sproutos-deploy-action@0d5ce8bb74ecd598ae996c34d7d2cb5ac156a180\n        with:\n          preset: hono\n          runtime: nodejs24.x\n          handler: run.sh\n          directory: apps/migrator/dist\n          project: my-app-migrator\n          migration-directory: apps/migrator/dist\n          migration-handler: migrate.handler\n          api-url: https://api.sproutos.me\n\n  deploy-web:\n    needs: migrate\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v5\n      - uses: actions/setup-node@v4\n        with:\n          node-version: 24\n      - run: npm ci\n      - run: npm run build\n      - uses: MySproutOS/sproutos-deploy-action@0d5ce8bb74ecd598ae996c34d7d2cb5ac156a180\n        with:\n          preset: next\n          runtime: nodejs24.x\n          handler: run.sh\n          directory: apps/website/.next/standalone\n          project: my-app-web\n          api-url: https://api.sproutos.me\n",
+        "name: Migrate and deploy to SproutOS\non:\n  push:\n    branches: [main]\n\npermissions:\n  contents: read\n  id-token: write\n\njobs:\n  migrate:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v5\n      - uses: actions/setup-node@v4\n        with:\n          node-version: 24\n      - run: npm ci\n      - run: npm run build:migrator\n      - uses: MySproutOS/sproutos-deploy-action@92e480886c7656e004c5bdf817e9733b35fd8c18\n        with:\n          preset: hono\n          runtime: nodejs24.x\n          handler: run.sh\n          directory: apps/migrator/dist\n          project: my-app-migrator\n          migration-directory: apps/migrator/dist\n          migration-handler: migrate.handler\n          api-url: https://api.sproutos.me\n\n  deploy-web:\n    needs: migrate\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v5\n      - uses: actions/setup-node@v4\n        with:\n          node-version: 24\n      - run: npm ci\n      - run: npm run build\n      - uses: MySproutOS/sproutos-deploy-action@92e480886c7656e004c5bdf817e9733b35fd8c18\n        with:\n          preset: next\n          runtime: nodejs24.x\n          handler: run.sh\n          directory: apps/website/.next/standalone\n          project: my-app-web\n          api-url: https://api.sproutos.me\n",
       ],
     },
     {
@@ -3902,7 +3902,7 @@ export const GENERATED_DOC_CONTENT: Record<string, RenderableTreeNode[]> = {
           $$mdtype: "Tag",
           name: "code",
           attributes: {},
-          children: ["0d5ce8bb74ecd598ae996c34d7d2cb5ac156a180"],
+          children: ["92e480886c7656e004c5bdf817e9733b35fd8c18"],
         },
         " is a thin wrapper around the published ",
         {
@@ -3913,11 +3913,11 @@ export const GENERATED_DOC_CONTENT: Record<string, RenderableTreeNode[]> = {
         },
         " CLI",
         " ",
-        "v0.1.0. The current local CLI is v0.2.1; it adds the complete region-aware project, signed-template,",
+        "v0.3.0. It supports project runtime defaults, per-release runtime and handler overrides, direct",
         " ",
-        "Android release, and resumable log-stream commands while preserving the action's packaging and",
+        "functions, region-aware projects, signed templates, Android releases, and resumable log streams",
         " ",
-        "deployment protocol.",
+        "without implementing a second deployment protocol.",
       ],
     },
     {
@@ -3927,7 +3927,7 @@ export const GENERATED_DOC_CONTENT: Record<string, RenderableTreeNode[]> = {
         language: "yaml",
       },
       children: [
-        "name: Deploy to SproutOS\non:\n  push:\n    branches: [main]\n\npermissions:\n  contents: read\n  id-token: write\n\njobs:\n  deploy:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v5\n      - uses: actions/setup-node@v4\n        with:\n          node-version: 24\n      - run: npm ci\n      - run: npm run build\n      - uses: MySproutOS/sproutos-deploy-action@0d5ce8bb74ecd598ae996c34d7d2cb5ac156a180\n        with:\n          preset: next\n          runtime: nodejs24.x\n          handler: run.sh\n          directory: apps/website/.next/standalone\n          project: my-web-project\n          api-url: https://api.sproutos.me\n",
+        "name: Deploy to SproutOS\non:\n  push:\n    branches: [main]\n\npermissions:\n  contents: read\n  id-token: write\n\njobs:\n  deploy:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v5\n      - uses: actions/setup-node@v4\n        with:\n          node-version: 24\n      - run: npm ci\n      - run: npm run build\n      - uses: MySproutOS/sproutos-deploy-action@92e480886c7656e004c5bdf817e9733b35fd8c18\n        with:\n          preset: next\n          runtime: nodejs24.x\n          handler: run.sh\n          directory: apps/website/.next/standalone\n          project: my-web-project\n          api-url: https://api.sproutos.me\n",
       ],
     },
     {
@@ -4280,7 +4280,7 @@ export const GENERATED_DOC_CONTENT: Record<string, RenderableTreeNode[]> = {
           $$mdtype: "Tag",
           name: "code",
           attributes: {},
-          children: ["c86dfdb7f055cb6cdf499b23f84ab91d640ca7a1"],
+          children: ["fe614e86287579b2c987dd9fadef55fde12fea74"],
         },
         " generates the",
         " ",
