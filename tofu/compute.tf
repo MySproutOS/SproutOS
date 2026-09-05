@@ -972,7 +972,14 @@ resource "aws_iam_policy" "application" {
         # The proxy rewrites a customer's logical `v-<id>` bucket below this exact object prefix.
         # No bucket lifecycle or policy action is granted to the public-facing instances.
         Effect = "Allow"
-        Action = ["s3:GetObject", "s3:PutObject", "s3:DeleteObject", "s3:DeleteObjectVersion"]
+        Action = [
+          "s3:GetObject",
+          "s3:GetObjectTagging",
+          "s3:PutObject",
+          "s3:PutObjectTagging",
+          "s3:DeleteObject",
+          "s3:DeleteObjectVersion",
+        ]
         Resource = [
           "${aws_s3_bucket.tenant_objects.arn}/v-*",
           "${aws_s3_bucket.tenant_objects.arn}/v-*/*",

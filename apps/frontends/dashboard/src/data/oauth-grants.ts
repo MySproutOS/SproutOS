@@ -83,6 +83,7 @@ const SCOPE_LABELS: Record<string, string> = {
   "github:identity": "Identify your GitHub contributions",
   "database:create": "Create databases",
   "database:read": "See your databases",
+  "database:update": "Change database settings",
   "database:delete": "Delete databases",
   "project:read": "See your projects",
   "project:create": "Create projects",

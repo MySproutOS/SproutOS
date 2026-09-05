@@ -24,6 +24,7 @@
     "uuid": "catalog:"
   },
   "devDependencies": {
+    "@aws-sdk/s3-request-presigner": "^3.1117.0",
     "@types/node": "catalog:",
     "@types/pg": "^8.23.1"
   }

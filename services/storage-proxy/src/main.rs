@@ -24,12 +24,13 @@ use futures_util::StreamExt;
 use redis::AsyncCommands;
 use sha2::{Digest, Sha256};
 use sproutos_metering_proto::UsageDimension;
-use sproutos_s3_sigv4::STREAMING_UNSIGNED_PAYLOAD_TRAILER;
+use sproutos_s3_sigv4::{STREAMING_UNSIGNED_PAYLOAD_TRAILER, sha256_hex};
 use sproutos_service_credentials::CredentialStore;
 use storage_proxy::{
     Denied, IncomingRequest, OutgoingRequest, Proxy, UpstreamCredentialProvider, bucket_from_path,
-    finish_authorization_with_payload_hash, is_list, is_listing_response, prepare_authorization,
-    strip_prefix_from_listing, upstream_headers, upstream_path, upstream_query,
+    finish_authorization_with_payload_hash, is_list, is_listing_response, operation_query,
+    prepare_authorization, service_id_from_bucket, strip_prefix_from_listing, upstream_headers,
+    upstream_path, upstream_query,
 };
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncSeekExt, AsyncWriteExt, BufReader};
 use tokio_util::io::ReaderStream;
@@ -54,9 +55,10 @@ const VAULT_ORIGINS: [&str; 3] = [
 /// `*` would be simpler and is not allowed to mean anything useful here: a request carrying
 /// `Authorization` is credentialed, and the wildcard is ignored for credentialed requests.
 const ALLOWED_HEADERS: &str = "authorization,content-type,content-length,content-md5,\
-x-amz-content-sha256,x-amz-date,x-amz-security-token,x-amz-acl,x-amz-meta-*,range,if-match,\
-if-none-match,content-encoding,x-amz-trailer,x-amz-decoded-content-length,\
-x-amz-sdk-checksum-algorithm";
+    x-amz-content-sha256,x-amz-date,x-amz-security-token,x-amz-acl,x-amz-meta-*,range,if-match,\
+    if-none-match,content-encoding,cache-control,content-disposition,x-amz-trailer,x-amz-decoded-content-length,\
+    x-amz-sdk-checksum-algorithm";
+const VISIBILITY_TAG: &str = "sproutos%3Avisibility";
 
 /// Headers the plugin needs to be able to read off the response.
 ///
@@ -244,7 +246,7 @@ async fn main() -> anyhow::Result<()> {
 ///
 /// A JSON body or a bare status would surface inside the AWS SDK as an unparseable response, and the
 /// customer would see "UnknownError" for what is actually a clear refusal.
-fn s3_error(denied: &Denied, origin: Option<&str>) -> Response {
+fn s3_error(denied: &Denied, origin: Option<&str>, capability: bool) -> Response {
     let (status, code, message) = denied.as_s3_error();
     let body = format!(
         "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\
@@ -262,7 +264,11 @@ fn s3_error(denied: &Denied, origin: Option<&str>) -> Response {
     );
     // CORS on the error too. Without it the browser replaces a legible 403 with an opaque network
     // failure, and the customer is told nothing at all.
-    apply_cors(response.headers_mut(), origin);
+    if capability {
+        apply_capability_cors(response.headers_mut());
+    } else {
+        apply_cors(response.headers_mut(), origin);
+    }
     response
 }
 
@@ -271,6 +277,7 @@ fn body_error(
     code: &'static str,
     message: &'static str,
     origin: Option<&str>,
+    capability: bool,
 ) -> Response {
     let mut response = (
         status,
@@ -283,7 +290,11 @@ fn body_error(
         axum::http::header::CONTENT_TYPE,
         HeaderValue::from_static("application/xml"),
     );
-    apply_cors(response.headers_mut(), origin);
+    if capability {
+        apply_capability_cors(response.headers_mut());
+    } else {
+        apply_cors(response.headers_mut(), origin);
+    }
     response
 }
 
@@ -580,6 +591,285 @@ fn apply_cors(headers: &mut axum::http::HeaderMap, origin: Option<&str>) {
     headers.insert(axum::http::header::VARY, HeaderValue::from_static("Origin"));
 }
 
+fn apply_capability_cors(headers: &mut axum::http::HeaderMap) {
+    headers.insert(
+        axum::http::header::ACCESS_CONTROL_ALLOW_ORIGIN,
+        HeaderValue::from_static("*"),
+    );
+    headers.insert(
+        axum::http::header::ACCESS_CONTROL_EXPOSE_HEADERS,
+        HeaderValue::from_static(EXPOSED_HEADERS),
+    );
+}
+
+fn is_presigned(query: &str) -> bool {
+    query
+        .split('&')
+        .any(|part| part.starts_with("X-Amz-Algorithm="))
+}
+
+fn object_key(path: &str) -> Option<&str> {
+    let (_, key) = path.trim_start_matches('/').split_once('/')?;
+    (!key.is_empty()).then_some(key)
+}
+
+fn query_has(query: &str, name: &str) -> bool {
+    query
+        .split('&')
+        .any(|part| part == name || part.starts_with(&format!("{name}=")))
+}
+
+fn query_value<'a>(query: &'a str, name: &str) -> Option<&'a str> {
+    query.split('&').find_map(|part| {
+        let (key, value) = part.split_once('=')?;
+        (key == name).then_some(value)
+    })
+}
+
+fn without_query_field(query: &str, name: &str) -> String {
+    query
+        .split('&')
+        .filter(|part| {
+            let key = part.split_once('=').map_or(*part, |(key, _)| key);
+            !part.is_empty() && key != name
+        })
+        .collect::<Vec<_>>()
+        .join("&")
+}
+
+fn requested_visibility(
+    headers: &BTreeMap<String, String>,
+    query: &str,
+) -> Result<Option<bool>, ()> {
+    let value = headers
+        .get("x-amz-acl")
+        .map(String::as_str)
+        .or_else(|| query_value(query, "x-amz-acl"));
+    match value {
+        None => Ok(None),
+        Some("public-read") => Ok(Some(true)),
+        Some("private") => Ok(Some(false)),
+        Some(_) => Err(()),
+    }
+}
+
+fn physical_object_path(proxy: &Proxy, path: &str) -> anyhow::Result<String> {
+    let Some(shared) = proxy.shared_bucket.as_deref() else {
+        return Ok(path.to_owned());
+    };
+    let tenant_bucket = bucket_from_path(path).unwrap_or_default();
+    upstream_path(shared, tenant_bucket, path)
+        .map_err(|_| anyhow::anyhow!("the request key leaves the tenant's prefix"))
+}
+
+async fn storage_request(
+    proxy: &Proxy,
+    method: axum::http::Method,
+    path: &str,
+    query: &str,
+    body: Vec<u8>,
+    content_type: Option<&str>,
+    tagging: Option<&str>,
+) -> anyhow::Result<reqwest::Response> {
+    let target = if query.is_empty() {
+        format!("{}{}", proxy.upstream, path)
+    } else {
+        format!("{}{}?{}", proxy.upstream, path, query)
+    };
+    let url = reqwest::Url::parse(&target)?;
+    let host = match url.port() {
+        Some(port) => format!("{}:{port}", url.host_str().unwrap_or_default()),
+        None => url.host_str().unwrap_or_default().to_owned(),
+    };
+    let amz_date = now_amz_date();
+    let payload_hash = sha256_hex(&body);
+    let credential = proxy.credential_provider.current().await?;
+    let signed = upstream_headers(
+        &proxy.region,
+        &credential,
+        &OutgoingRequest {
+            method: method.as_str(),
+            path,
+            query,
+            host: &host,
+            payload_hash: &payload_hash,
+            amz_date: &amz_date,
+            content_type,
+            cache_control: None,
+            content_disposition: None,
+            content_encoding: None,
+            tagging,
+        },
+    );
+    let mut request = proxy.client.request(method, url);
+    for (name, value) in signed {
+        if name != "host" {
+            request = request.header(name, value);
+        }
+    }
+    Ok(request.body(body).send().await?)
+}
+
+#[derive(Debug, Eq, PartialEq)]
+enum TaggedVisibility {
+    Missing,
+    Inherit,
+    Public,
+    Private,
+}
+
+fn tagged_visibility_from_xml(xml: &str) -> TaggedVisibility {
+    let marker = format!("<Key>{}</Key>", VISIBILITY_TAG.replace("%3A", ":"));
+    let Some(after_key) = xml.split(&marker).nth(1) else {
+        return TaggedVisibility::Inherit;
+    };
+    let tag = after_key.split("</Tag>").next().unwrap_or(after_key);
+    if tag.contains("<Value>public</Value>") {
+        TaggedVisibility::Public
+    } else if tag.contains("<Value>private</Value>") {
+        TaggedVisibility::Private
+    } else {
+        TaggedVisibility::Inherit
+    }
+}
+
+async fn tagged_visibility(proxy: &Proxy, path: &str) -> anyhow::Result<TaggedVisibility> {
+    let path = physical_object_path(proxy, path)?;
+    let response = storage_request(
+        proxy,
+        axum::http::Method::GET,
+        &path,
+        "tagging",
+        vec![],
+        None,
+        None,
+    )
+    .await?;
+    if response.status() == StatusCode::NOT_FOUND {
+        return Ok(TaggedVisibility::Missing);
+    }
+    if !response.status().is_success() {
+        anyhow::bail!("the backing store refused the visibility lookup");
+    }
+    Ok(tagged_visibility_from_xml(&response.text().await?))
+}
+
+async fn object_exists(proxy: &Proxy, path: &str) -> anyhow::Result<bool> {
+    let path = physical_object_path(proxy, path)?;
+    let response = storage_request(
+        proxy,
+        axum::http::Method::HEAD,
+        &path,
+        "",
+        vec![],
+        None,
+        None,
+    )
+    .await?;
+    if response.status() == StatusCode::NOT_FOUND {
+        return Ok(false);
+    }
+    if !response.status().is_success() {
+        anyhow::bail!("the backing store refused the object existence lookup");
+    }
+    Ok(true)
+}
+
+async fn set_tagged_visibility(
+    proxy: &Proxy,
+    path: &str,
+    public: bool,
+) -> anyhow::Result<reqwest::Response> {
+    let path = physical_object_path(proxy, path)?;
+    let value = if public { "public" } else { "private" };
+    let body = format!(
+        "<Tagging><TagSet><Tag><Key>sproutos:visibility</Key><Value>{value}</Value></Tag></TagSet></Tagging>"
+    )
+    .into_bytes();
+    storage_request(
+        proxy,
+        axum::http::Method::PUT,
+        &path,
+        "tagging",
+        body,
+        Some("application/xml"),
+        None,
+    )
+    .await
+}
+
+async fn empty_body() -> anyhow::Result<SpooledBody> {
+    let file = tempfile::tempfile()?;
+    Ok(SpooledBody {
+        file: tokio::fs::File::from_std(file),
+        len: 0,
+        payload_hash: sha256_hex(b""),
+    })
+}
+
+async fn public_read(state: &Arc<AppState>, method: &axum::http::Method, path: &str) -> Response {
+    let denied = || s3_error(&Denied::Unsigned, None, true);
+    let Some(bucket) = bucket_from_path(path) else {
+        return denied();
+    };
+    let Some(service_id) = service_id_from_bucket(bucket) else {
+        return denied();
+    };
+    let resolved = match state.proxy.store.resolve_public_storage(service_id).await {
+        Ok(Some(service)) => service,
+        _ => return denied(),
+    };
+    if credit_exhausted(state.credit.as_ref(), resolved.organization_id).await {
+        return denied();
+    }
+    let visibility = match tagged_visibility(&state.proxy, path).await {
+        Ok(TaggedVisibility::Public) => true,
+        Ok(TaggedVisibility::Private) => false,
+        Ok(TaggedVisibility::Inherit | TaggedVisibility::Missing) => resolved.public_read,
+        Err(_) => return StatusCode::BAD_GATEWAY.into_response(),
+    };
+    if !visibility {
+        return denied();
+    }
+    let usage = match state.meter.as_ref() {
+        Some(meter) => {
+            match meter.begin(resolved, Some(UsageDimension::ObjectStorageReadRequest)) {
+                Ok(usage) => Some(usage.with_request_quantity(2.0)),
+                Err(_) => return StatusCode::SERVICE_UNAVAILABLE.into_response(),
+            }
+        }
+        None => None,
+    };
+    let body = match empty_body().await {
+        Ok(body) => body,
+        Err(_) => return StatusCode::SERVICE_UNAVAILABLE.into_response(),
+    };
+    let incoming = IncomingRequest {
+        method: method.as_str(),
+        path,
+        query: "",
+        headers: BTreeMap::new(),
+        body: &[],
+    };
+    match forward(
+        &state.proxy,
+        method,
+        "",
+        &incoming,
+        body,
+        usage,
+        resolved.public_read,
+    )
+    .await
+    {
+        Ok(mut response) => {
+            apply_capability_cors(response.headers_mut());
+            response
+        }
+        Err(_) => StatusCode::BAD_GATEWAY.into_response(),
+    }
+}
+
 async fn handle(State(state): State<Arc<AppState>>, request: Request) -> Response {
     let method = request.method().clone();
     let uri = request.uri().clone();
@@ -593,6 +883,7 @@ async fn handle(State(state): State<Arc<AppState>>, request: Request) -> Respons
         }
     }
     let origin = headers.get("origin").cloned();
+    let presigned = is_presigned(&query);
 
     /*
       Liveness, before anything that needs a credential.
@@ -619,7 +910,11 @@ async fn handle(State(state): State<Arc<AppState>>, request: Request) -> Respons
     */
     if method == axum::http::Method::OPTIONS {
         let mut response = StatusCode::NO_CONTENT.into_response();
-        apply_cors(response.headers_mut(), origin.as_deref());
+        if presigned {
+            apply_capability_cors(response.headers_mut());
+        } else {
+            apply_cors(response.headers_mut(), origin.as_deref());
+        }
         response.headers_mut().insert(
             axum::http::header::ACCESS_CONTROL_ALLOW_METHODS,
             HeaderValue::from_static("GET,PUT,POST,DELETE,HEAD"),
@@ -633,6 +928,15 @@ async fn handle(State(state): State<Arc<AppState>>, request: Request) -> Respons
             HeaderValue::from_static("3000"),
         );
         return response;
+    }
+
+    if !presigned
+        && !headers.contains_key("authorization")
+        && matches!(method, axum::http::Method::GET | axum::http::Method::HEAD)
+        && query.is_empty()
+        && object_key(&path).is_some()
+    {
+        return public_read(&state, &method, &path).await;
     }
 
     // Reject unsigned, unknown-key and bad UNSIGNED-PAYLOAD signatures before admitting the body.
@@ -649,7 +953,7 @@ async fn handle(State(state): State<Arc<AppState>>, request: Request) -> Respons
         Ok(prepared) => prepared,
         Err(denied) => {
             warn!(%method, %path, %denied, "refused before body admission");
-            return s3_error(&denied, origin.as_deref());
+            return s3_error(&denied, origin.as_deref(), presigned);
         }
     };
 
@@ -662,6 +966,7 @@ async fn handle(State(state): State<Arc<AppState>>, request: Request) -> Respons
             "EntityTooLarge",
             "The request body is too large.",
             origin.as_deref(),
+            presigned,
         );
     }
 
@@ -675,6 +980,7 @@ async fn handle(State(state): State<Arc<AppState>>, request: Request) -> Respons
                 "SlowDown",
                 "Reduce your request rate.",
                 origin.as_deref(),
+                presigned,
             );
         }
     };
@@ -710,6 +1016,7 @@ async fn handle(State(state): State<Arc<AppState>>, request: Request) -> Respons
                 "EntityTooLarge",
                 "The request body is too large.",
                 origin.as_deref(),
+                presigned,
             );
         }
         Err(BodyReadFailure::Rejected) => {
@@ -718,6 +1025,7 @@ async fn handle(State(state): State<Arc<AppState>>, request: Request) -> Respons
                 "IncompleteBody",
                 "The request body could not be read.",
                 origin.as_deref(),
+                presigned,
             );
         }
         Err(BodyReadFailure::InvalidAwsChunked) => unreachable!("spooling does not decode"),
@@ -727,6 +1035,7 @@ async fn handle(State(state): State<Arc<AppState>>, request: Request) -> Respons
                 "RequestTimeout",
                 "The request body took too long to arrive.",
                 origin.as_deref(),
+                presigned,
             );
         }
         Err(BodyReadFailure::Spool) => {
@@ -735,6 +1044,7 @@ async fn handle(State(state): State<Arc<AppState>>, request: Request) -> Respons
                 "SlowDown",
                 "Temporary upload capacity is unavailable.",
                 origin.as_deref(),
+                presigned,
             );
         }
     };
@@ -747,6 +1057,7 @@ async fn handle(State(state): State<Arc<AppState>>, request: Request) -> Respons
                     "EntityTooLarge",
                     "The request body is too large.",
                     origin.as_deref(),
+                    presigned,
                 );
             }
             Err(BodyReadFailure::InvalidAwsChunked | BodyReadFailure::Rejected) => {
@@ -755,6 +1066,7 @@ async fn handle(State(state): State<Arc<AppState>>, request: Request) -> Respons
                     "InvalidRequest",
                     "The aws-chunked request body or checksum is invalid.",
                     origin.as_deref(),
+                    presigned,
                 );
             }
             Err(BodyReadFailure::TimedOut) => unreachable!("decoding does not wait on a socket"),
@@ -764,6 +1076,7 @@ async fn handle(State(state): State<Arc<AppState>>, request: Request) -> Respons
                     "SlowDown",
                     "Temporary upload capacity is unavailable.",
                     origin.as_deref(),
+                    presigned,
                 );
             }
         }
@@ -790,7 +1103,7 @@ async fn handle(State(state): State<Arc<AppState>>, request: Request) -> Respons
         Ok(resolved) => resolved,
         Err(denied) => {
             warn!(%method, %path, %denied, "refused");
-            return s3_error(&denied, origin.as_deref());
+            return s3_error(&denied, origin.as_deref(), presigned);
         }
     };
 
@@ -800,6 +1113,7 @@ async fn handle(State(state): State<Arc<AppState>>, request: Request) -> Respons
             "InsufficientCredit",
             "This service is suspended until credit is available.",
             origin.as_deref(),
+            presigned,
         );
     }
 
@@ -814,6 +1128,7 @@ async fn handle(State(state): State<Arc<AppState>>, request: Request) -> Respons
                         "SlowDown",
                         "Metering capacity is temporarily unavailable.",
                         origin.as_deref(),
+                        presigned,
                     );
                 }
             }
@@ -832,9 +1147,24 @@ async fn handle(State(state): State<Arc<AppState>>, request: Request) -> Respons
         "forwarding"
     );
 
-    match forward(&state.proxy, &method, &path, &query, &incoming, body, usage).await {
+    let upstream_query = operation_query(&query);
+    match forward(
+        &state.proxy,
+        &method,
+        &upstream_query,
+        &incoming,
+        body,
+        usage,
+        resolved.public_read,
+    )
+    .await
+    {
         Ok(mut response) => {
-            apply_cors(response.headers_mut(), origin.as_deref());
+            if presigned {
+                apply_capability_cors(response.headers_mut());
+            } else {
+                apply_cors(response.headers_mut(), origin.as_deref());
+            }
             response
         }
         Err(cause) => {
@@ -851,12 +1181,99 @@ async fn handle(State(state): State<Arc<AppState>>, request: Request) -> Respons
 async fn forward(
     proxy: &Proxy,
     method: &axum::http::Method,
-    path: &str,
     query: &str,
     incoming: &IncomingRequest<'_>,
     body: SpooledBody,
-    usage: Option<StorageUsage>,
+    mut usage: Option<StorageUsage>,
+    public_read_default: bool,
 ) -> anyhow::Result<Response> {
+    let path = incoming.path;
+    if query_has(query, "tagging") || incoming.headers.contains_key("x-amz-tagging") {
+        return Ok(body_error(
+            StatusCode::NOT_IMPLEMENTED,
+            "NotImplemented",
+            "Object tagging is reserved for SproutOS access controls.",
+            None,
+            false,
+        ));
+    }
+    let visibility = match requested_visibility(&incoming.headers, query) {
+        Ok(value) => value,
+        Err(()) => {
+            return Ok((
+                StatusCode::BAD_REQUEST,
+                "Only the private and public-read canned ACLs are supported.",
+            )
+                .into_response());
+        }
+    };
+    if query_has(query, "acl") {
+        if !object_exists(proxy, incoming.path).await? {
+            return Ok(body_error(
+                StatusCode::NOT_FOUND,
+                "NoSuchKey",
+                "The specified key does not exist.",
+                None,
+                false,
+            ));
+        }
+        if method == axum::http::Method::GET {
+            let public = match tagged_visibility(proxy, incoming.path).await? {
+                TaggedVisibility::Missing => {
+                    return Ok(body_error(
+                        StatusCode::NOT_FOUND,
+                        "NoSuchKey",
+                        "The specified key does not exist.",
+                        None,
+                        false,
+                    ));
+                }
+                TaggedVisibility::Inherit => public_read_default,
+                TaggedVisibility::Public => true,
+                TaggedVisibility::Private => false,
+            };
+            let public_grant = if public {
+                "<Grant><Grantee xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" xsi:type=\"Group\"><URI>http://acs.amazonaws.com/groups/global/AllUsers</URI></Grantee><Permission>READ</Permission></Grant>"
+            } else {
+                ""
+            };
+            let xml = format!(
+                "<?xml version=\"1.0\" encoding=\"UTF-8\"?><AccessControlPolicy><Owner><ID>sproutos</ID><DisplayName>SproutOS</DisplayName></Owner><AccessControlList><Grant><Grantee xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" xsi:type=\"CanonicalUser\"><ID>sproutos</ID><DisplayName>SproutOS</DisplayName></Grantee><Permission>FULL_CONTROL</Permission></Grant>{public_grant}</AccessControlList></AccessControlPolicy>"
+            );
+            if let Some(usage) = usage.take() {
+                usage.with_request_quantity(2.0).commit(xml.len() as u64);
+            }
+            return Ok(
+                ([(axum::http::header::CONTENT_TYPE, "application/xml")], xml).into_response(),
+            );
+        }
+        if method == axum::http::Method::PUT && body.len == 0 {
+            let Some(public) = visibility else {
+                return Ok((
+                    StatusCode::BAD_REQUEST,
+                    "PutObjectAcl requires x-amz-acl: private or public-read.",
+                )
+                    .into_response());
+            };
+            let response = set_tagged_visibility(proxy, incoming.path, public).await?;
+            if let Some(usage) = usage.take() {
+                usage.with_request_quantity(2.0).commit(0);
+            }
+            return Ok(response.status().into_response());
+        }
+        return Ok(StatusCode::BAD_REQUEST.into_response());
+    }
+
+    let tags_upload = object_key(incoming.path).is_some()
+        && ((method == axum::http::Method::PUT && !query_has(query, "uploadId"))
+            || (method == axum::http::Method::POST && query_has(query, "uploads")));
+    let tagging = visibility.filter(|_| tags_upload).map(|public| {
+        format!(
+            "{VISIBILITY_TAG}={}",
+            if public { "public" } else { "private" }
+        )
+    });
+    let query = without_query_field(query, "x-amz-acl");
     /*
       Where the request actually goes.
 
@@ -865,13 +1282,13 @@ async fn forward(
       so a key that could escape it is refused here rather than sanitised.
     */
     let (path, query) = match proxy.shared_bucket.as_deref() {
-        None => (path.to_owned(), query.to_owned()),
+        None => (path.to_owned(), query),
         Some(shared) => {
             let tenant_bucket = bucket_from_path(path).unwrap_or_default();
-            let listing = is_list(method.as_str(), tenant_bucket, path, query);
+            let listing = is_list(method.as_str(), tenant_bucket, path, &query);
 
             let rewritten_query = if listing {
-                upstream_query(tenant_bucket, query)
+                upstream_query(tenant_bucket, &query)
                     .map_err(|_| anyhow::anyhow!("the request key leaves the tenant's prefix"))?
             } else {
                 query.to_owned()
@@ -915,6 +1332,13 @@ async fn forward(
             payload_hash: &body.payload_hash,
             amz_date: &amz_date,
             content_type: incoming.headers.get("content-type").map(String::as_str),
+            cache_control: incoming.headers.get("cache-control").map(String::as_str),
+            content_disposition: incoming
+                .headers
+                .get("content-disposition")
+                .map(String::as_str),
+            content_encoding: incoming.headers.get("content-encoding").map(String::as_str),
+            tagging: tagging.as_deref(),
         },
     );
 
@@ -1061,6 +1485,18 @@ mod tests {
                 .get(axum::http::header::ACCESS_CONTROL_ALLOW_ORIGIN)
                 .unwrap(),
             "app://obsidian.md"
+        );
+    }
+
+    #[test]
+    fn visibility_parser_reads_only_the_reserved_tag_value() {
+        let xml = "<Tagging><TagSet><Tag><Key>sproutos:visibility</Key><Value>invalid</Value></Tag><Tag><Key>customer</Key><Value>public</Value></Tag></TagSet></Tagging>";
+        assert_eq!(tagged_visibility_from_xml(xml), TaggedVisibility::Inherit);
+        assert_eq!(
+            tagged_visibility_from_xml(
+                "<Tagging><TagSet><Tag><Key>sproutos:visibility</Key><Value>private</Value></Tag></TagSet></Tagging>"
+            ),
+            TaggedVisibility::Private
         );
     }
 

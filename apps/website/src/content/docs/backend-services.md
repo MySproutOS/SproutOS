@@ -34,7 +34,9 @@ attached for the common one-application, one-service case.
 - [Valkey](/docs/valkey) provides cache and queue primitives; BullMQ projects also receive a tenant
   prefix.
 - [OpenSearch](/docs/opensearch) provides tenant-scoped search indexes.
-- [Object storage](/docs/object-storage) stores mutable files through an S3-compatible API.
+- [Object storage](/docs/object-storage) stores mutable files through an S3-compatible API. It is
+  private by default, supports presigned browser transfers and optional anonymous object reads, and
+  uses multipart uploads when an individual request would exceed 64 MiB.
 
 Services are independent resources. Deploying application code does not recreate them, and rolling
 back a deployment does not roll back their data.

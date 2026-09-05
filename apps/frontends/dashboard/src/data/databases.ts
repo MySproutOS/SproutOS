@@ -8,6 +8,7 @@ import {
   getV1OrgsByOrgSlugServicesByServiceIdConnectionQueryKey,
   getV1OrgsByOrgSlugServicesOptions,
   getV1OrgsByOrgSlugServicesQueryKey,
+  patchV1OrgsByOrgSlugServicesByServiceIdObjectStorageAccessMutation,
   postV1OrgsByOrgSlugServicesByServiceIdBranchesByDatabaseBranchIdRotateMutation,
   postV1OrgsByOrgSlugServicesByServiceIdBranchesMutation,
   postV1OrgsByOrgSlugServicesByServiceIdRotateMutation,
@@ -86,6 +87,7 @@ export type BackendService = {
   database: string | null
   username: string | null
   managedByOauthApp: { clientId: string; name: string } | null
+  publicRead: boolean | null
   createdLabel: string
 }
 
@@ -111,6 +113,7 @@ export function useBackendServices(orgSlug: string) {
       database: service.database,
       username: service.username,
       managedByOauthApp: service.managedByOauthApp ?? null,
+      publicRead: service.publicRead,
       // The generated type says Date; without transformers.gen.ts it is an ISO string.
       createdLabel: CREATED_FORMAT.format(new Date(service.createdAt)),
     })),
@@ -141,10 +144,23 @@ export function useCreateBackendService(orgSlug: string) {
       name: string
       kind: ServiceKind
       projectId?: string | null
+      publicRead?: boolean
     }): Promise<string> => {
       const created = await mutation.mutateAsync({ path: { orgSlug }, body: input })
       await invalidate()
       return created.connectionUri
+    },
+  }
+}
+
+export function useObjectStorageAccess(orgSlug: string) {
+  const invalidate = useServiceInvalidation(orgSlug)
+  const mutation = useMutation(patchV1OrgsByOrgSlugServicesByServiceIdObjectStorageAccessMutation())
+  return {
+    ...mutation,
+    setPublicRead: async (serviceId: string, publicRead: boolean) => {
+      await mutation.mutateAsync({ path: { orgSlug, serviceId }, body: { publicRead } })
+      await invalidate()
     },
   }
 }

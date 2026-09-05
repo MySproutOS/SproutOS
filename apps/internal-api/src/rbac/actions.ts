@@ -62,6 +62,7 @@ export const ACTIONS = [
 
   "database:read",
   "database:create",
+  "database:update",
   "database:delete",
   "database:connect",
   "database:admin",

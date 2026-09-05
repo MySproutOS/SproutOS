@@ -193,6 +193,48 @@ describe.runIf(reachable)("object-storage credential reveal", () => {
     expect(body.connectionUri).toContain(encodeURIComponent(credential.accessKeyId))
     expect(body.connectionUri).toContain(encodeURIComponent(credential.secretAccessKey))
   })
+
+  it("changes and lists the service-level public-read default", async () => {
+    const user = await createTestUser("storage-public-read")
+    const organization = await provisionOrganization(db).ensureDefaultOrganization({
+      userId: user.id,
+      name: user.name,
+      email: user.email,
+    })
+    trackOrganization(organization.id)
+    const region = await db.selectFrom("region").select("id").executeTakeFirstOrThrow()
+    const serviceId = v7()
+    await db
+      .insertInto("backendService")
+      .values({
+        id: serviceId,
+        organizationId: organization.id,
+        projectId: null,
+        regionId: region.id,
+        name: "Public media",
+        kind: "object_storage",
+        status: "active",
+      })
+      .execute()
+
+    const updated = await app.request(
+      `/v1/orgs/${organization.slug}/services/${serviceId}/object-storage-access`,
+      {
+        method: "PATCH",
+        headers: { ...authHeaders(user), "Content-Type": "application/json" },
+        body: JSON.stringify({ publicRead: true }),
+      },
+    )
+    expect(updated.status).toBe(200)
+    expect(await updated.json()).toEqual({ id: serviceId, publicRead: true })
+
+    const listed = await app.request(`/v1/orgs/${organization.slug}/services`, {
+      headers: authHeaders(user),
+    })
+    expect(listed.status).toBe(200)
+    const body = (await listed.json()) as { data: { id: string; publicRead: boolean | null }[] }
+    expect(body.data.find((service) => service.id === serviceId)?.publicRead).toBe(true)
+  })
 })
 
 async function allowedKinds(): Promise<string[]> {

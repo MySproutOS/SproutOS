@@ -30,6 +30,7 @@ export const servicesSchemaService = Type.Object({
   database: Nullable(Type.String()),
   username: Nullable(Type.String()),
   keyPrefix: Type.Optional(Type.String()),
+  publicRead: Nullable(Type.Boolean()),
   /** Application whose OAuth grant created the service, if any. */
   managedByOauthApp: Nullable(
     Type.Object({
@@ -49,6 +50,16 @@ export const servicesSchemaCreateRequest = Type.Object({
   kind: Type.Union(SERVICE_KINDS.map((kind) => Type.Literal(kind))),
   /** Omit for a standalone service — TASK 37's whole point. */
   projectId: Type.Optional(Nullable(UUID7String)),
+  publicRead: Type.Optional(Type.Boolean()),
+})
+
+export const servicesSchemaObjectStorageAccessRequest = Type.Object({
+  publicRead: Type.Boolean(),
+})
+
+export const servicesSchemaObjectStorageAccessResponse = Type.Object({
+  id: UUID7String,
+  publicRead: Type.Boolean(),
 })
 
 /** A deliberately explicit response carrying a credential: create, rotate, or S3-only reveal. */

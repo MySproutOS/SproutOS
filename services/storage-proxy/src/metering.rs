@@ -27,6 +27,7 @@ impl StorageMeter {
             dimension,
             request_id: Uuid::now_v7(),
             occurred_at: now_millis(),
+            request_quantity: 1.0,
         })
     }
 }
@@ -38,9 +39,15 @@ pub struct StorageUsage {
     dimension: Option<UsageDimension>,
     request_id: Uuid,
     occurred_at: i64,
+    request_quantity: f64,
 }
 
 impl StorageUsage {
+    pub fn with_request_quantity(mut self, quantity: f64) -> Self {
+        self.request_quantity = quantity;
+        self
+    }
+
     pub fn commit(mut self, egress_bytes: u64) {
         let Some(reservation) = self.reservation.take() else {
             return;
@@ -55,7 +62,7 @@ impl StorageUsage {
                 format!("{common}:{}", dimension.as_str()),
                 self.service.organization_id,
                 dimension,
-                1.0,
+                self.request_quantity,
                 self.occurred_at,
             )
             .with_attribute(
@@ -114,10 +121,11 @@ mod tests {
 
     fn resolved() -> ResolvedService {
         ResolvedService {
-            credential_id: Uuid::parse_str("01a03b00-0000-7000-8000-000000000001").unwrap(),
+            credential_id: Some(Uuid::parse_str("01a03b00-0000-7000-8000-000000000001").unwrap()),
             backend_service_id: Uuid::parse_str("01a03b00-0000-7000-8000-000000000002").unwrap(),
             organization_id: Uuid::parse_str("01a03b00-0000-7000-8000-000000000003").unwrap(),
             project_id: Some(Uuid::parse_str("01a03b00-0000-7000-8000-000000000004").unwrap()),
+            public_read: false,
         }
     }
 

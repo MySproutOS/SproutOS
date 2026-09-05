@@ -377,6 +377,9 @@ import type {
   PatchV1OrgsByOrgSlugRolesByRoleIdData,
   PatchV1OrgsByOrgSlugRolesByRoleIdErrors,
   PatchV1OrgsByOrgSlugRolesByRoleIdResponses,
+  PatchV1OrgsByOrgSlugServicesByServiceIdObjectStorageAccessData,
+  PatchV1OrgsByOrgSlugServicesByServiceIdObjectStorageAccessErrors,
+  PatchV1OrgsByOrgSlugServicesByServiceIdObjectStorageAccessResponses,
   PatchV1UserMePreferencesData,
   PatchV1UserMePreferencesResponses,
   PatchV1UserMeProfileData,
@@ -2210,6 +2213,31 @@ export const getV1OrgsByOrgSlugServicesByServiceIdConnection = <
     GetV1OrgsByOrgSlugServicesByServiceIdConnectionErrors,
     ThrowOnError
   >({ url: "/v1/orgs/{orgSlug}/services/{serviceId}/connection", ...options })
+
+/**
+ * Changes the default anonymous-read policy for an object-storage service
+ */
+export const patchV1OrgsByOrgSlugServicesByServiceIdObjectStorageAccess = <
+  ThrowOnError extends boolean = false,
+>(
+  options: Options<PatchV1OrgsByOrgSlugServicesByServiceIdObjectStorageAccessData, ThrowOnError>,
+): RequestResult<
+  PatchV1OrgsByOrgSlugServicesByServiceIdObjectStorageAccessResponses,
+  PatchV1OrgsByOrgSlugServicesByServiceIdObjectStorageAccessErrors,
+  ThrowOnError
+> =>
+  (options.client ?? client).patch<
+    PatchV1OrgsByOrgSlugServicesByServiceIdObjectStorageAccessResponses,
+    PatchV1OrgsByOrgSlugServicesByServiceIdObjectStorageAccessErrors,
+    ThrowOnError
+  >({
+    url: "/v1/orgs/{orgSlug}/services/{serviceId}/object-storage-access",
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options.headers,
+    },
+  })
 
 /**
  * Issues a new password and invalidates the old URI

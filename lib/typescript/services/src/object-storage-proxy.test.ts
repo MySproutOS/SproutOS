@@ -1,9 +1,12 @@
 import {
+  GetObjectAclCommand,
   GetObjectCommand,
   ListObjectsV2Command,
+  PutObjectAclCommand,
   PutObjectCommand,
   S3Client,
 } from "@aws-sdk/client-s3"
+import { getSignedUrl } from "@aws-sdk/s3-request-presigner"
 import { execFile } from "node:child_process"
 import { promisify } from "node:util"
 import { db } from "@sproutos/db"
@@ -241,6 +244,98 @@ describe.runIf(reachable)("through the storage proxy", () => {
     expect(await read.Body?.transformToString()).toBe("# hi")
   }, 60_000)
 
+  it("accepts browser presigned uploads and applies public-read controls", async () => {
+    const mine = await vault("Browser uploads")
+    const client = asCustomer(mine.uri)
+    const bucket = bucketNameFor(mine.backendServiceId)
+    const key = "receipts/presigned.png"
+    const upload = await getSignedUrl(
+      client,
+      new PutObjectCommand({
+        Bucket: bucket,
+        Key: key,
+        ContentType: "image/png",
+        CacheControl: "public, max-age=3600",
+      }),
+      { expiresIn: 3600 },
+    )
+    const bytes = new Uint8Array(5 * 1024 * 1024)
+    bytes[0] = 137
+
+    const uploaded = await fetch(upload, {
+      method: "PUT",
+      headers: { "Content-Type": "image/png", "Cache-Control": "public, max-age=3600" },
+      body: bytes,
+    })
+    expect(uploaded.status).toBe(200)
+    expect(uploaded.headers.get("access-control-allow-origin")).toBe("*")
+
+    const download = await getSignedUrl(
+      client,
+      new GetObjectCommand({ Bucket: bucket, Key: key }),
+      {
+        expiresIn: 3600,
+      },
+    )
+    const downloaded = await fetch(download)
+    expect(downloaded.status).toBe(200)
+    expect(downloaded.headers.get("access-control-allow-origin")).toBe("*")
+    expect((await downloaded.arrayBuffer()).byteLength).toBe(bytes.byteLength)
+
+    const plainUrl = `${active!.publicEndpoint}/${bucket}/${key}`
+    expect((await fetch(plainUrl)).status).toBe(403)
+
+    await db
+      .updateTable("backendService")
+      .set({ publicRead: true })
+      .where("id", "=", mine.backendServiceId)
+      .execute()
+    const publicRead = await fetch(plainUrl)
+    expect(publicRead.status).toBe(200)
+    expect(publicRead.headers.get("content-type")).toBe("image/png")
+    expect(publicRead.headers.get("cache-control")).toBe("public, max-age=3600")
+    expect(publicRead.headers.get("access-control-allow-origin")).toBe("*")
+    expect((await publicRead.arrayBuffer()).byteLength).toBe(bytes.byteLength)
+
+    await client.send(new PutObjectAclCommand({ Bucket: bucket, Key: key, ACL: "private" }))
+    expect((await fetch(plainUrl)).status).toBe(403)
+    const privateAcl = await client.send(new GetObjectAclCommand({ Bucket: bucket, Key: key }))
+    expect(privateAcl.Grants?.some((grant) => grant.Permission === "READ")).toBe(false)
+
+    await client.send(new PutObjectAclCommand({ Bucket: bucket, Key: key, ACL: "public-read" }))
+    expect((await fetch(plainUrl)).status).toBe(200)
+    const publicAcl = await client.send(new GetObjectAclCommand({ Bucket: bucket, Key: key }))
+    expect(publicAcl.Grants?.some((grant) => grant.Permission === "READ")).toBe(true)
+
+    await client.send(
+      new PutObjectCommand({
+        Bucket: bucket,
+        Key: "receipts/upload-acl.txt",
+        Body: "public from upload",
+        ACL: "public-read",
+      }),
+    )
+    expect(
+      (await fetch(`${active!.publicEndpoint}/${bucket}/receipts/upload-acl.txt`)).status,
+    ).toBe(200)
+
+    await client.send(
+      new PutObjectCommand({
+        Bucket: bucket,
+        Key: "receipts/private-upload.txt",
+        Body: "private from upload",
+        ACL: "private",
+      }),
+    )
+    expect(
+      (await fetch(`${active!.publicEndpoint}/${bucket}/receipts/private-upload.txt`)).status,
+    ).toBe(403)
+
+    await expect(
+      client.send(new GetObjectAclCommand({ Bucket: bucket, Key: "receipts/missing.txt" })),
+    ).rejects.toMatchObject({ name: "NoSuchKey" })
+  }, 90_000)
+
   it("accepts the ordinary boto3 request shape used by Python applications", async () => {
     const mine = await vault("Python")
     const parsed = parseObjectStorageUri(mine.uri)
@@ -388,12 +483,19 @@ describe.runIf(reachable)("through the storage proxy", () => {
     // both still exist. The proxy's lookup against the live row is the revocation.
     const mine = await vault("Mine")
     const stale = asCustomer(mine.uri)
+    const bucket = bucketNameFor(mine.backendServiceId)
+    const presigned = await getSignedUrl(
+      stale,
+      new GetObjectCommand({ Bucket: bucket, Key: "rotated.txt" }),
+      { expiresIn: 3600 },
+    )
 
     await driver().rotateCredentials(mine.backendServiceId)
 
-    await expect(
-      stale.send(new ListObjectsV2Command({ Bucket: bucketNameFor(mine.backendServiceId) })),
-    ).rejects.toMatchObject({ name: "AccessDenied" })
+    await expect(stale.send(new ListObjectsV2Command({ Bucket: bucket }))).rejects.toMatchObject({
+      name: "AccessDenied",
+    })
+    expect((await fetch(presigned)).status).toBe(403)
   }, 60_000)
 
   it("answers Obsidian's preflight, which carries no credential at all", async () => {

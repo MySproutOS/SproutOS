@@ -67,11 +67,22 @@ forever; it stops meaning anything the moment no live row answers.
 where the platform's belief and the provider's are two facts that can disagree and the customer
 experiences the provider's. The same correction Postgres needed.
 
+## Presigned and public requests
+
+Query-presigned SigV4 requests use the same live credential lookup, bucket authorization, service
+status, and credit check as header-authenticated requests. Their expiry is limited to SigV4's
+seven-day maximum, while credential rotation or service suspension revokes them immediately.
+Capability URLs receive wildcard CORS headers so an arbitrary browser origin can use them.
+
+Physical buckets remain private. An anonymous `GET` or `HEAD` is served only when the service's
+`public_read` default or the object's `sproutos:visibility` tag permits it. `public-read` and
+`private` canned ACLs map to that reserved tag; `GetObjectAcl` and `PutObjectAcl` expose the mapping
+to ordinary SDKs. Listings and every mutation remain authenticated. Public responses honor the
+object metadata returned by S3, including `Cache-Control`. Customer tagging operations are refused
+so they cannot inspect, replace, or accidentally remove the reserved access-control tag.
+
 ## Deliberately not supported
 
-- **Presigned URLs** (`X-Amz-Algorithm` in the query string). A signature over a request that has not
-  happened yet, with its own expiry rules, and no client this serves uses them. Refused with a
-  message that says so rather than a 403 that reads like a wrong key.
 - **SigV4 streaming chunked uploads** (`STREAMING-AWS4-HMAC-SHA256-PAYLOAD`). Each AWS-framed chunk
   carries its own signature, and accepting that literal without validating every frame would be
   verifying nothing. Ordinary high-level SDK multipart uploads are supported: each `UploadPart`
