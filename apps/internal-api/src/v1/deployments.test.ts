@@ -106,6 +106,9 @@ describe.skipIf(!reachable)("deployment routes", () => {
     expect(created.json.status).toBe("queued")
     expect(created.json.kind).toBe("production")
     expect(created.json.url).toBeNull()
+    expect(created.json.preset).toBe("next")
+    expect(created.json.runtime).toBe("nodejs24.x")
+    expect(created.json.handler).toBe("run.sh")
   })
 
   it("enqueues exactly one job per deployment", async () => {

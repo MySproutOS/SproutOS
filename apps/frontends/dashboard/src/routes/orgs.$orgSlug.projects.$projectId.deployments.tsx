@@ -104,6 +104,7 @@ function Deployments() {
                 <TableHead className="w-28">Status</TableHead>
                 <TableHead>Source</TableHead>
                 <TableHead className="w-24">Kind</TableHead>
+                <TableHead>Runtime</TableHead>
                 <TableHead className="w-28">Created</TableHead>
                 <TableHead className="w-40" />
               </TableRow>
@@ -153,6 +154,14 @@ function Deployments() {
 
                   <TableCell>
                     <span className="text-[12.5px] text-muted-foreground">{row.kind}</span>
+                  </TableCell>
+
+                  <TableCell>
+                    <span className="font-mono text-[11.5px] text-muted-foreground">
+                      {row.runtime === null
+                        ? row.preset
+                        : `${row.preset} · ${row.runtime}${row.handler === null ? "" : ` · ${row.handler}`}`}
+                    </span>
                   </TableCell>
 
                   <TableCell>

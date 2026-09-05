@@ -58,6 +58,9 @@ export type ProvisionProjectInput = {
   createdByOauthGrantId: string | null
   name: string
   description?: string | null
+  deploymentPreset?: string | null
+  runtime?: string | null
+  handler?: string | null
   slug: string
   kind: string
   rootDir: string
@@ -217,6 +220,9 @@ export function provisionProject(db: Kysely<DB>) {
         createdByOauthGrantId: input.createdByOauthGrantId,
         name: input.name,
         description: input.description ?? null,
+        deploymentPreset: input.deploymentPreset ?? null,
+        runtime: input.runtime ?? null,
+        handler: input.handler ?? null,
         slug: input.slug,
         kind: input.kind,
         rootDir: input.rootDir,

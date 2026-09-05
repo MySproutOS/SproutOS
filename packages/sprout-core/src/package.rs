@@ -255,7 +255,8 @@ impl ArtifactPackager {
     }
 
     /// Prepare a runnable preset in a private staging tree, then package it without mutating the
-    /// caller's build output. `next` and `hono` receive the Lambda Web Adapter `run.sh`; Next's
+    /// caller's build output. `next` and `hono` receive the Lambda Web Adapter `run.sh`; `web`
+    /// supplies that executable and receives a custom-runtime bridge; Next's
     /// standalone output also receives the adjacent static/public trees that Next excludes.
     pub fn package_deploy_directory(
         &self,
@@ -264,7 +265,7 @@ impl ArtifactPackager {
         kind: PackageKind,
         preset: &str,
     ) -> Result<PackagedArtifact> {
-        if !matches!(preset, "next" | "hono") {
+        if !matches!(preset, "next" | "hono" | "web") {
             return self.package_zip(source, destination, kind);
         }
         let source = source.canonicalize().map_err(|source| SproutError::Io {
@@ -276,6 +277,24 @@ impl ArtifactPackager {
             source,
         })?;
         copy_tree(&source, staging.path())?;
+        if preset == "web" {
+            let run_path = staging.path().join("run.sh");
+            if !run_path.is_file() {
+                return Err(SproutError::PackagingRejected(
+                    "the web preset requires an executable run.sh at the artifact root".into(),
+                ));
+            }
+            make_executable(&run_path)?;
+            let bootstrap = staging.path().join("bootstrap");
+            std::fs::write(&bootstrap, "#!/bin/sh\nset -eu\nexec ./run.sh\n").map_err(
+                |source| SproutError::Io {
+                    operation: "write web custom-runtime bridge",
+                    source,
+                },
+            )?;
+            make_executable(&bootstrap)?;
+            return self.package_zip(staging.path(), destination, kind);
+        }
         let entry = find_server_entry(staging.path())?;
         if preset == "next"
             && let Some(app_root) = next_app_root(&source)
@@ -871,6 +890,37 @@ mod tests {
         assert!(zip.by_name("run.sh").is_ok());
         assert!(zip.by_name(".next/static/chunk.js").is_ok());
         assert!(zip.by_name("public/icon.svg").is_ok());
+    }
+
+    #[test]
+    fn web_preparation_requires_run_script_and_adds_custom_runtime_bridge() {
+        let root = tempdir().unwrap();
+        let web = root.path().join("web");
+        fs::create_dir(&web).unwrap();
+        fs::write(web.join("run.sh"), "#!/bin/sh\nexec ./server\n").unwrap();
+        fs::write(web.join("server"), "binary").unwrap();
+        let output = root.path().join("web.zip");
+        ArtifactPackager::new(PackagingLimits::default())
+            .package_deploy_directory(&web, &output, PackageKind::BuildZip, "web")
+            .unwrap();
+        assert!(!web.join("bootstrap").exists());
+        let file = fs::File::open(output).unwrap();
+        let mut zip = zip::ZipArchive::new(file).unwrap();
+        assert!(zip.by_name("run.sh").is_ok());
+        assert!(zip.by_name("bootstrap").is_ok());
+
+        let missing = root.path().join("missing");
+        fs::create_dir(&missing).unwrap();
+        assert!(
+            ArtifactPackager::new(PackagingLimits::default())
+                .package_deploy_directory(
+                    &missing,
+                    &root.path().join("missing.zip"),
+                    PackageKind::BuildZip,
+                    "web",
+                )
+                .is_err()
+        );
     }
 
     #[test]

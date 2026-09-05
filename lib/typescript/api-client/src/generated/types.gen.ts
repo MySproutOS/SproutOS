@@ -1208,6 +1208,9 @@ export type GetV1OrgsByOrgSlugProjectsResponses = {
       id: string
       name: string
       description: string | null
+      deploymentPreset: string | null
+      runtime: string | null
+      handler: string | null
       slug: string
       kind: string
       state: string
@@ -1265,6 +1268,9 @@ export type PostV1OrgsByOrgSlugProjectsData = {
     region: string
     slug?: string
     kind?: "site" | "workflow"
+    deploymentPreset?: "next" | "hono" | "web" | "function" | "static" | "android" | null
+    runtime?: string | null
+    handler?: string | null
     rootDir?: string
     dockerfilePath?: string
     productionBranch?: string
@@ -1354,6 +1360,9 @@ export type PostV1OrgsByOrgSlugProjectsResponses = {
       id: string
       name: string
       description: string | null
+      deploymentPreset: string | null
+      runtime: string | null
+      handler: string | null
       slug: string
       kind: string
       state: string
@@ -1536,6 +1545,9 @@ export type GetV1OrgsByOrgSlugProjectsByProjectIdResponses = {
     id: string
     name: string
     description: string | null
+    deploymentPreset: string | null
+    runtime: string | null
+    handler: string | null
     slug: string
     kind: string
     state: string
@@ -1605,6 +1617,9 @@ export type PatchV1OrgsByOrgSlugProjectsByProjectIdData = {
   body?: {
     name?: string
     description?: string | null
+    deploymentPreset?: "next" | "hono" | "web" | "function" | "static" | "android" | null
+    runtime?: string | null
+    handler?: string | null
     region?: string
     slug?: string
     rootDir?: string
@@ -1664,6 +1679,9 @@ export type PatchV1OrgsByOrgSlugProjectsByProjectIdResponses = {
     id: string
     name: string
     description: string | null
+    deploymentPreset: string | null
+    runtime: string | null
+    handler: string | null
     slug: string
     kind: string
     state: string
@@ -4376,6 +4394,8 @@ export type GetV1OrgsByOrgSlugProjectsByProjectIdDeploymentsResponses = {
       url: string | null
       hostname: string | null
       preset: string
+      runtime: string | null
+      handler: string | null
       lambdaVersion: string | null
       migrationStatus: string | null
       migrationOutput: string | null
@@ -4446,6 +4466,8 @@ export type PostV1OrgsByOrgSlugProjectsByProjectIdDeploymentsResponses = {
     url: string | null
     hostname: string | null
     preset: string
+    runtime: string | null
+    handler: string | null
     lambdaVersion: string | null
     migrationStatus: string | null
     migrationOutput: string | null
@@ -4502,6 +4524,8 @@ export type GetV1OrgsByOrgSlugDeploymentsByDeploymentIdResponses = {
     url: string | null
     hostname: string | null
     preset: string
+    runtime: string | null
+    handler: string | null
     lambdaVersion: string | null
     migrationStatus: string | null
     migrationOutput: string | null
@@ -4566,6 +4590,8 @@ export type PostV1OrgsByOrgSlugDeploymentsByDeploymentIdRollbackResponses = {
     url: string | null
     hostname: string | null
     preset: string
+    runtime: string | null
+    handler: string | null
     lambdaVersion: string | null
     migrationStatus: string | null
     migrationOutput: string | null
@@ -6830,6 +6856,41 @@ export type GetV1RegionsResponses = {
 
 export type GetV1RegionsResponse = GetV1RegionsResponses[keyof GetV1RegionsResponses]
 
+export type GetV1RuntimesData = {
+  body?: never
+  path?: never
+  query?: never
+  url: "/v1/runtimes"
+}
+
+export type GetV1RuntimesResponses = {
+  /**
+   * Runtime catalogue
+   */
+  200: {
+    data: Array<{
+      id: string
+      language: string
+      languageLabel: string
+      version: string
+      label: string
+      os: string
+      executionModel: "managed" | "custom"
+      deprecatedAt: Date
+      blockCreateAt: Date
+      blockUpdateAt: Date
+      selectionEndsAt: Date | null
+      status: string
+      selectable: boolean
+      recommended: boolean
+      defaultPresets: Array<string>
+      compatiblePresets: Array<string>
+    }>
+  }
+}
+
+export type GetV1RuntimesResponse = GetV1RuntimesResponses[keyof GetV1RuntimesResponses]
+
 export type GetV1StoreCategoriesData = {
   body?: never
   path?: never
@@ -7931,7 +7992,7 @@ export type PostV1DeployUploadUrlData = {
   body?: {
     project?: string
     digest: string
-    preset: string
+    preset: "next" | "hono" | "web" | "function" | "static" | "android"
   }
   path?: never
   query?: never
@@ -8002,7 +8063,7 @@ export type PostV1DeployReleaseData = {
     digest: string
     static_key?: string
     static_digest?: string
-    preset: string
+    preset: "next" | "hono" | "web" | "function" | "static" | "android"
     environment: string
     commit: string
     ref: string

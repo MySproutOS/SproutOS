@@ -9,6 +9,7 @@ import deployments from "./deployments"
 import customDomains from "./custom-domains"
 import deployWorkflow from "./deploy-workflow"
 import regions from "./regions"
+import runtimes from "./runtimes"
 import metering from "./metering"
 import deploy from "./deploy"
 import android from "./android"
@@ -161,6 +162,7 @@ app.route("/orgs", orgs)
   offered the same set, and scoping it would imply otherwise.
 */
 app.route("/regions", regions)
+app.route("/runtimes", runtimes)
 app.route("/store", store)
 app.route("/templates", templates)
 app.route("/user", user)

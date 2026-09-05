@@ -1,10 +1,13 @@
 import { crudAuditLog, crudDeployment, fetchCreditRetentionState, fetchDeployment } from "@lib/dao"
 import {
   functionName,
+  handlerForPreset,
   pointAlias,
   publishLiveDeployment,
   publishRoute,
+  runtimeForPreset,
   type Route,
+  webAdapterForRelease,
 } from "@lib/lambda"
 import { Redis } from "ioredis"
 import {
@@ -61,6 +64,8 @@ type DeploymentRow = {
   url: string | null
   hostname: string | null
   preset: string
+  runtime: string | null
+  handler: string | null
   lambdaVersion: string | null
   migrationStatus: string | null
   migrationOutput: string | null
@@ -87,6 +92,8 @@ function present(row: DeploymentRow, buildFailureReason: string | null = null) {
     url: row.url,
     hostname: row.hostname,
     preset: row.preset,
+    runtime: row.runtime,
+    handler: row.handler,
     lambdaVersion: row.lambdaVersion,
     migrationStatus: row.migrationStatus,
     migrationOutput: row.migrationOutput,
@@ -221,6 +228,8 @@ const app = new Hono()
           "url",
           "hostname",
           "preset",
+          "runtime",
+          "handler",
           "lambdaVersion",
           "migrationStatus",
           "migrationOutput",
@@ -267,7 +276,7 @@ const app = new Hono()
 
       const project = await db
         .selectFrom("project")
-        .select(["id", "productionBranch", "scaleMode"])
+        .select(["id", "productionBranch", "scaleMode", "deploymentPreset", "runtime", "handler"])
         .where("id", "=", projectId)
         .where("organizationId", "=", c.var.organization.id)
         .where("deletedAt", "is", null)
@@ -292,6 +301,18 @@ const app = new Hono()
         return throwBadRequest(c, "A preview deployment needs a prNumber")
       }
 
+      const preset = project.deploymentPreset ?? "next"
+      const defaults = runtimeForPreset(preset)
+      const lambdaBacked = preset !== "static" && preset !== "android"
+      const runtime = lambdaBacked ? (project.runtime ?? defaults.runtime) : null
+      const handler = lambdaBacked
+        ? (project.handler ??
+          (preset === "function" ? null : handlerForPreset(preset, runtime ?? defaults.runtime)))
+        : null
+      if (preset === "function" && handler === null) {
+        return throwBadRequest(c, "The function preset requires a configured project handler")
+      }
+
       const deployment = await crudDeployment(db).create({
         id: v7(),
         projectId: project.id,
@@ -308,6 +329,10 @@ const app = new Hono()
           same reasoning `runtime_class` carries.
         */
         scaleMode: project.scaleMode,
+        preset,
+        runtime,
+        handler,
+        webAdapter: handler === null ? false : webAdapterForRelease(preset, handler),
       })
 
       await enqueue(db, {

@@ -30,9 +30,16 @@ export { mintProjectToken } from "./project-token"
 export {
   DEFAULT_HANDLER,
   DEFAULT_RUNTIME,
+  DEPLOYMENT_PRESETS,
   isSupportedRuntime,
+  isRuntimeCompatible,
+  handlerForPreset,
+  RUNTIME_CATALOGUE,
+  runtimeCatalogueEntry,
   runtimeForPreset,
   SUPPORTED_RUNTIMES,
+  type DeploymentPreset,
+  type RuntimeCatalogueEntry,
   type SupportedRuntime,
   webAdapterForRelease,
 } from "./runtimes"

@@ -182,7 +182,13 @@ function ProjectDetail() {
                     </dd>
                   </div>
                   <Fact label="Region" value={data.region} mono />
-                  <Fact label="Runtime" value={data.runtime} mono />
+                  <Fact
+                    label="Framework"
+                    value={data.deploymentPreset ?? (data.isGroup ? "Group" : "Automatic")}
+                    mono
+                  />
+                  <Fact label="Runtime default" value={data.runtime ?? "Not applicable"} mono />
+                  <Fact label="Handler default" value={data.handler ?? "Not applicable"} mono />
                   {data.isGroup && (
                     <Fact label="Primary domain" value={data.primaryHostname ?? "—"} mono />
                   )}

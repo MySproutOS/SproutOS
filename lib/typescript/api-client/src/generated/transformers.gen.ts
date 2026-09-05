@@ -40,6 +40,7 @@ import type {
   GetV1OrgsByOrgSlugWorkflowRunsResponse,
   GetV1OrgsByOrgSlugWorkflowsResponse,
   GetV1OrgsResponse,
+  GetV1RuntimesResponse,
   GetV1StoreFeaturedResponse,
   GetV1StoreListingsBySlugResponse,
   GetV1StoreListingsResponse,
@@ -888,6 +889,21 @@ export const postV1OrgsByOrgSlugApiKeysResponseTransformer = async (
   if (data.expiresAt) {
     data.expiresAt = new Date(data.expiresAt)
   }
+  return data
+}
+
+export const getV1RuntimesResponseTransformer = async (
+  data: any,
+): Promise<GetV1RuntimesResponse> => {
+  data.data = data.data.map((item: any) => {
+    item.deprecatedAt = new Date(item.deprecatedAt)
+    item.blockCreateAt = new Date(item.blockCreateAt)
+    item.blockUpdateAt = new Date(item.blockUpdateAt)
+    if (item.selectionEndsAt) {
+      item.selectionEndsAt = new Date(item.selectionEndsAt)
+    }
+    return item
+  })
   return data
 }
 

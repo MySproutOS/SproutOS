@@ -27,11 +27,17 @@ import { SkeletonText } from "@ui/base/ui/skeleton"
 import { Textarea } from "@ui/base/ui/textarea"
 import { ListError } from "@frontends/dashboard/components/list-states"
 import { PrimaryProjectSelect } from "@frontends/dashboard/components/projects/primary-project-select"
+import {
+  RuntimeSettings,
+  preferredRuntime,
+  type DeploymentPreset,
+} from "@frontends/dashboard/components/projects/runtime-settings"
 import { PageBody, PageHeader } from "@frontends/dashboard/components/shell/page-header"
 import {
   useProject,
   useProjects,
   useRegions,
+  useRuntimes,
   useUpdateProject,
   useDeleteProject,
   type AutoUpdateCadence,
@@ -89,6 +95,9 @@ function ModifyProject() {
             upstreamFullName={data.upstreamFullName}
             isGroup={data.isGroup}
             primaryChildProjectId={data.primaryChildProjectId}
+            deploymentPreset={data.deploymentPreset}
+            runtime={data.runtime}
+            handler={data.handler}
           />
         )}
       </PageBody>
@@ -107,6 +116,9 @@ function ModifyForm({
   upstreamFullName,
   isGroup,
   primaryChildProjectId: initialPrimaryChildProjectId,
+  deploymentPreset: initialDeploymentPreset,
+  runtime: initialRuntime,
+  handler: initialHandler,
 }: {
   orgSlug: string
   projectId: string
@@ -118,6 +130,9 @@ function ModifyForm({
   upstreamFullName: string | null
   isGroup: boolean
   primaryChildProjectId: string | null
+  deploymentPreset: string | null
+  runtime: string | null
+  handler: string | null
 }) {
   const [name, setName] = useState(initialName)
   const [description, setDescription] = useState(initialDescription)
@@ -129,6 +144,11 @@ function ModifyForm({
     initialPrimaryChildProjectId ?? "none",
   )
   const [saved, setSaved] = useState(false)
+  const [deploymentPreset, setDeploymentPreset] = useState<DeploymentPreset>(
+    (initialDeploymentPreset as DeploymentPreset | null) ?? "next",
+  )
+  const [runtime, setRuntime] = useState<string | null>(initialRuntime ?? "nodejs24.x")
+  const [handler, setHandler] = useState(initialHandler ?? "")
   const [error, setError] = useState<string | null>(null)
 
   /*
@@ -140,6 +160,7 @@ function ModifyForm({
     than a release.
   */
   const regions = useRegions()
+  const runtimes = useRuntimes()
   const projects = useProjects(orgSlug)
   const update = useUpdateProject(orgSlug)
   const remove = useDeleteProject(orgSlug)
@@ -162,6 +183,19 @@ function ModifyForm({
           description: description.trim() === "" ? null : description.trim(),
           ...(region === initialRegion || region === "—" ? {} : { region }),
           autoUpdateEnabled: updateSchedule !== "off",
+          ...(!isGroup
+            ? {
+                deploymentPreset,
+                ...(["static", "android"].includes(deploymentPreset)
+                  ? { runtime: null, handler: null }
+                  : {
+                      runtime,
+                      ...(deploymentPreset === "function"
+                        ? { handler: handler.trim() }
+                        : { handler: null }),
+                    }),
+              }
+            : {}),
           ...(updateSchedule === "off" ? {} : { autoUpdateCadence: updateSchedule }),
           ...(isGroup
             ? {
@@ -193,6 +227,26 @@ function ModifyForm({
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-4">
+          {!isGroup && (
+            <RuntimeSettings
+              preset={deploymentPreset}
+              runtime={runtime}
+              handler={handler}
+              runtimes={runtimes.data?.data ?? []}
+              onPresetChange={(nextPreset) => {
+                setDeploymentPreset(nextPreset)
+                const nextRuntime = preferredRuntime(runtimes.data?.data ?? [], nextPreset)
+                setRuntime(nextRuntime)
+                if (nextRuntime === null) {
+                  setHandler("")
+                  return
+                }
+                if (nextPreset !== "function") setHandler("")
+              }}
+              onRuntimeChange={setRuntime}
+              onHandlerChange={setHandler}
+            />
+          )}
           <div className="flex flex-col gap-1.5">
             <Label htmlFor="project-name" className={nameIsValid ? "" : "text-destructive"}>
               Project name

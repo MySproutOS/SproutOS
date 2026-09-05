@@ -41,12 +41,14 @@ jobs:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24
       - run: npm ci
       - run: npm run build:migrator
       - uses: MySproutOS/sproutos-deploy-action@0d5ce8bb74ecd598ae996c34d7d2cb5ac156a180
         with:
           preset: hono
+          runtime: nodejs24.x
+          handler: run.sh
           directory: apps/migrator/dist
           project: my-app-migrator
           migration-directory: apps/migrator/dist
@@ -60,12 +62,14 @@ jobs:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24
       - run: npm ci
       - run: npm run build
       - uses: MySproutOS/sproutos-deploy-action@0d5ce8bb74ecd598ae996c34d7d2cb5ac156a180
         with:
           preset: next
+          runtime: nodejs24.x
+          handler: run.sh
           directory: apps/website/.next/standalone
           project: my-app-web
           api-url: https://api.sproutos.me
@@ -101,7 +105,7 @@ jobs:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24
       - run: npm ci
       - run: npm run migrate
 

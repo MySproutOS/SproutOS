@@ -50,7 +50,9 @@ accepting projects, then pass one of its exact codes:
 
 ```shell
 sprout region list
-sprout project create --name my-site --region us-east-1 --blank
+sprout runtime list
+sprout project create --name my-site --region us-east-1 --blank \
+  --preset next --runtime nodejs24.x
 sprout project get my-site
 ```
 
@@ -123,19 +125,23 @@ that may be exposed to client-side application code.
 Build your application first, then point `sprout deploy` at the finished artifact:
 
 ```shell
-sprout deploy my-site --preset next --path .next/standalone
+sprout deploy my-site --preset next --runtime nodejs24.x --path .next/standalone
 sprout deployment list my-site
 sprout logs my-site
 ```
 
 The CLI packages output deterministically, negotiates the upload, creates a release, and waits for
-a terminal deployment result. Presets are `static`, `web`, `next`, `hono`, and `android`. Preview
+a terminal deployment result. Presets are `static`, `web`, `next`, `hono`, `function`, and
+`android`. A direct function also requires `--handler`. Preview
 deployments use `--environment preview`; production is the default. Use `deployment get` or
 `deployment wait` with a deployment id when you need to inspect or wait for an existing release.
 
 Production database migrations remain a customer-owned GitHub Actions step; see [Run database
 migrations](/docs/database-migrations). Android releases have additional custody and verification
 steps; see [Distribute Android apps](/docs/android-distribution).
+
+Project runtime settings supply the normal default; deploy flags override one release without
+changing it. See [Runtimes and framework presets](/docs/runtimes).
 
 ## Manage upstream updates and project groups
 

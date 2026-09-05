@@ -20,6 +20,8 @@ export type Deployment = {
   url: string | null
   hostname: string | null
   preset: string
+  runtime: string | null
+  handler: string | null
   lambdaVersion: string | null
   migrationStatus: string | null
   migrationOutput: string | null
@@ -69,6 +71,8 @@ export function useDeployments(orgSlug: string, projectId: string) {
       url: row.url ?? null,
       hostname: row.hostname ?? null,
       preset: row.preset,
+      runtime: row.runtime ?? null,
+      handler: row.handler ?? null,
       lambdaVersion: row.lambdaVersion ?? null,
       migrationStatus: row.migrationStatus ?? null,
       migrationOutput: row.migrationOutput ?? null,

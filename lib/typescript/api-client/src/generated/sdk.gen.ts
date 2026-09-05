@@ -49,6 +49,7 @@ import {
   getV1OrgsByOrgSlugWorkflowRunsResponseTransformer,
   getV1OrgsByOrgSlugWorkflowsResponseTransformer,
   getV1OrgsResponseTransformer,
+  getV1RuntimesResponseTransformer,
   getV1StoreFeaturedResponseTransformer,
   getV1StoreListingsBySlugResponseTransformer,
   getV1StoreListingsResponseTransformer,
@@ -336,6 +337,8 @@ import type {
   GetV1OrgsResponses,
   GetV1RegionsData,
   GetV1RegionsResponses,
+  GetV1RuntimesData,
+  GetV1RuntimesResponses,
   GetV1StoreCategoriesData,
   GetV1StoreCategoriesResponses,
   GetV1StoreFeaturedData,
@@ -3486,6 +3489,18 @@ export const getV1Regions = <ThrowOnError extends boolean = false>(
 ): RequestResult<GetV1RegionsResponses, unknown, ThrowOnError> =>
   (options?.client ?? client).get<GetV1RegionsResponses, unknown, ThrowOnError>({
     url: "/v1/regions",
+    ...options,
+  })
+
+/**
+ * Lambda ZIP runtimes that SproutOS recognizes and their lifecycle metadata
+ */
+export const getV1Runtimes = <ThrowOnError extends boolean = false>(
+  options?: Options<GetV1RuntimesData, ThrowOnError>,
+): RequestResult<GetV1RuntimesResponses, unknown, ThrowOnError> =>
+  (options?.client ?? client).get<GetV1RuntimesResponses, unknown, ThrowOnError>({
+    responseTransformer: getV1RuntimesResponseTransformer,
+    url: "/v1/runtimes",
     ...options,
   })
 

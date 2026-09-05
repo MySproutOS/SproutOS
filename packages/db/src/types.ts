@@ -1001,8 +1001,10 @@ export interface Project {
   createdAt: Generated<Timestamp>
   createdByOauthGrantId: string | null
   deletedAt: Timestamp | null
+  deploymentPreset: string | null
   description: string | null
   dockerfilePath: Generated<string>
+  handler: string | null
   id: string
   isGroup: Generated<boolean>
   kind: Generated<string>
@@ -1015,6 +1017,7 @@ export interface Project {
   regionId: string | null
   repositoryId: string
   rootDir: Generated<string>
+  runtime: string | null
   scaleMode: Generated<string>
   servingMode: string | null
   slug: string

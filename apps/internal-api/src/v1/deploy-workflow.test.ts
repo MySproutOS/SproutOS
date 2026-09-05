@@ -34,6 +34,8 @@ describe("the generated deploy workflow", () => {
     )
     expect(step?.with).toMatchObject({
       preset: "next",
+      runtime: "nodejs24.x",
+      handler: "run.sh",
       directory: "apps/website/.next/standalone",
       project: "reddit-clone-web",
     })

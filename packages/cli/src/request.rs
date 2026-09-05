@@ -63,6 +63,9 @@ pub fn command_name(command: &Command) -> &'static str {
         Command::Region(RegionArgs {
             command: RegionCommand::List,
         }) => "region.list",
+        Command::Runtime(RuntimeArgs {
+            command: RuntimeCommand::List,
+        }) => "runtime.list",
         Command::Project(ProjectArgs {
             command: ProjectCommand::List { .. },
         }) => "project.list",
@@ -154,6 +157,9 @@ pub fn plan(
         Command::Region(RegionArgs {
             command: RegionCommand::List,
         }) => api(Method::Get, "/v1/regions", None),
+        Command::Runtime(RuntimeArgs {
+            command: RuntimeCommand::List,
+        }) => api(Method::Get, "/v1/runtimes", None),
         Command::Project(ProjectArgs {
             command:
                 ProjectCommand::List {
@@ -226,6 +232,9 @@ pub fn plan(
                 "source": source,
             });
             insert_option(&mut body, "description", args.description.clone());
+            insert_option(&mut body, "deploymentPreset", args.preset.map(enum_name));
+            insert_option(&mut body, "runtime", args.runtime.clone());
+            insert_option(&mut body, "handler", args.handler.clone());
             insert_option(&mut body, "slug", args.slug.clone());
             insert_option(&mut body, "rootDir", args.root_dir.clone());
             insert_option(&mut body, "dockerfilePath", args.dockerfile_path.clone());
@@ -297,6 +306,9 @@ pub fn plan(
         }) => {
             let mut body = serde_json::json!({});
             insert_option(&mut body, "name", args.name.clone());
+            insert_option(&mut body, "deploymentPreset", args.preset.map(enum_name));
+            insert_option(&mut body, "runtime", args.runtime.clone());
+            insert_option(&mut body, "handler", args.handler.clone());
             if args.clear_description {
                 body["description"] = Value::Null;
             } else {
@@ -698,6 +710,49 @@ mod tests {
                 body: None,
             }
         );
+    }
+
+    #[test]
+    fn runtime_list_uses_the_authenticated_catalogue_endpoint() {
+        let cli = Cli::parse_from(["sprout", "runtime", "list"]);
+        assert_eq!(
+            plan(&cli.command, None, None).unwrap().unwrap(),
+            ApiRequest {
+                method: Method::Get,
+                path: "/v1/runtimes".into(),
+                body: None,
+            }
+        );
+    }
+
+    #[test]
+    fn project_create_forwards_function_runtime_defaults() {
+        let cli = Cli::parse_from([
+            "sprout",
+            "--org",
+            "acme",
+            "project",
+            "create",
+            "--name",
+            "Worker",
+            "--region",
+            "us-east-1",
+            "--blank",
+            "--preset",
+            "function",
+            "--runtime",
+            "python3.14",
+            "--handler",
+            "app.handler",
+        ]);
+        let body = plan(&cli.command, cli.org.as_deref(), None)
+            .unwrap()
+            .unwrap()
+            .body
+            .unwrap();
+        assert_eq!(body["deploymentPreset"], "function");
+        assert_eq!(body["runtime"], "python3.14");
+        assert_eq!(body["handler"], "app.handler");
     }
 
     #[test]

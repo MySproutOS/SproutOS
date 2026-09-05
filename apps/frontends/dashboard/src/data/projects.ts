@@ -8,6 +8,7 @@ import {
   getV1OrgsByOrgSlugProjectsOptions,
   getV1OrgsByOrgSlugProjectsQueryKey,
   getV1RegionsOptions,
+  getV1RuntimesOptions,
   patchV1OrgsByOrgSlugProjectsByProjectIdMutation,
   postV1OrgsByOrgSlugProjectsByProjectIdJobsByJobIdRetryMutation,
 } from "@lib/api-client/generated/@tanstack/react-query.gen"
@@ -58,7 +59,9 @@ export type Project = {
 export type ProjectDetail = Project & {
   description: string
   hostname: string | null
-  runtime: string
+  deploymentPreset: string | null
+  runtime: string | null
+  handler: string | null
   autoUpdateForks: boolean
   autoUpdateCadence: AutoUpdateCadence
   upstreamFullName: string | null
@@ -219,7 +222,9 @@ export function useProject(orgSlug: string, projectId: string) {
             parentProjectId: project.parentProjectId ?? null,
             managedByOauthApp: project.managedByOauthApp ?? null,
             liveDeploymentId: project.liveDeploymentId ?? null,
-            runtime: project.kind,
+            deploymentPreset: project.deploymentPreset ?? null,
+            runtime: project.runtime ?? null,
+            handler: project.handler ?? null,
             autoUpdateForks: project.autoUpdateEnabled,
             autoUpdateCadence: project.autoUpdateCadence,
             upstreamFullName: project.repository.upstreamFullName,
@@ -294,6 +299,11 @@ export function useUpdateProject(orgSlug: string) {
 /** The regions a project's services may be placed in. Served from the database, not hardcoded. */
 export function useRegions() {
   return useQuery(getV1RegionsOptions())
+}
+
+/** The server-owned Lambda runtime catalogue, including compatibility and lifecycle warnings. */
+export function useRuntimes() {
+  return useQuery(getV1RuntimesOptions())
 }
 
 /**

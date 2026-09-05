@@ -839,6 +839,7 @@ fn preset_name(value: DeployPreset) -> &'static str {
         DeployPreset::Next => "next",
         DeployPreset::Hono => "hono",
         DeployPreset::Web => "web",
+        DeployPreset::Function => "function",
         DeployPreset::Static => "static",
         DeployPreset::Android => "android",
     }

@@ -25,6 +25,8 @@ export const deploymentSchemaResponse = Type.Object({
   hostname: Nullable(Type.String()),
   /** `static` rolls back by moving the edge pointer; server presets move a Lambda alias. */
   preset: Type.String(),
+  runtime: Nullable(Type.String()),
+  handler: Nullable(Type.String()),
   /** The Lambda version this release published. The rollback target. */
   lambdaVersion: Nullable(Type.String()),
   /** `skipped` when the project has no migrator, which is not the same as nobody having run one. */

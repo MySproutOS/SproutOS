@@ -91,13 +91,15 @@ jobs:
       # build.
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24
       - run: npm ci
       - run: npm run build
 
       - uses: MySproutOS/sproutos-deploy-action@v1
         with:
           preset: ${preset}
+          runtime: nodejs24.x
+          handler: run.sh
           directory: ${directory}
 ${
   input.several

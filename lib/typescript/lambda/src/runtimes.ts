@@ -1,83 +1,373 @@
 import type { Runtime } from "@aws-sdk/client-lambda"
 import { WEB_ADAPTER_HANDLER } from "./web-adapter"
 
-/**
- * Which Lambda runtimes a customer may ask for, and what runs their code by default.
- *
- * `publishFunction` used to hardcode `nodejs22.x` and `index.handler`. That is a fine default and a
- * terrible constraint: it pinned every project on the platform to one Node version, so an AWS
- * runtime deprecation became a platform-wide emergency to be resolved by grep, and a Hono API and a
- * Next.js server had to share an entry point neither of them picked.
- *
- * **The allowlist is here rather than in the API route** so there is one answer to "what can we
- * publish", next to the code that publishes it. `Runtime` is AWS's own union and the values are
- * exact: `nodejs22` is not `nodejs22.x`, and Lambda rejects the wrong one at deploy time with a
- * message that does not say which field was wrong. Checking at the API boundary turns that into a
- * 400 that names the field.
- *
- * Deliberately a subset of what Lambda offers. A runtime we have never published is a runtime whose
- * handler convention and bundle layout nobody here has tested, and offering it would be a promise
- * made by an autocomplete list.
- */
-export const SUPPORTED_RUNTIMES = [
-  "nodejs22.x",
-  "nodejs20.x",
-  "python3.13",
-  "python3.12",
-  "provided.al2023",
-] as const satisfies readonly Runtime[]
+export const DEPLOYMENT_PRESETS = ["next", "hono", "web", "function", "static", "android"] as const
+export type DeploymentPreset = (typeof DEPLOYMENT_PRESETS)[number]
+export type RuntimeLanguage = "node" | "python" | "java" | "dotnet" | "ruby" | "custom"
+export type RuntimeStatus = "recommended" | "supported" | "deprecated"
 
-export type SupportedRuntime = (typeof SUPPORTED_RUNTIMES)[number]
-
-export function isSupportedRuntime(value: string): value is SupportedRuntime {
-  return (SUPPORTED_RUNTIMES as readonly string[]).includes(value)
+export type RuntimeCatalogueEntry = {
+  id: Runtime
+  language: RuntimeLanguage
+  languageLabel: string
+  version: string
+  label: string
+  os: "Amazon Linux 2" | "Amazon Linux 2023"
+  executionModel: "managed" | "custom"
+  deprecatedAt: string
+  blockCreateAt: string
+  blockUpdateAt: string
+  selectionEndsAt?: string
+  status: RuntimeStatus
+  recommended: boolean
+  defaultPresets: readonly string[]
+  compatiblePresets: readonly string[]
 }
 
-/** What the platform publishes when a release does not say. */
-export const DEFAULT_RUNTIME: SupportedRuntime = "nodejs22.x"
+const nodePresets = ["next", "hono", "web", "function"] as const
+const functionPresets = ["function"] as const
+const customRuntimePresets = ["web", "function"] as const
+
+const RUNTIME_DEFINITIONS = [
+  {
+    id: "nodejs24.x",
+    language: "node",
+    languageLabel: "Node.js",
+    version: "24",
+    label: "Node.js 24",
+    os: "Amazon Linux 2023",
+    deprecatedAt: "2028-04-30",
+    blockCreateAt: "2028-06-01",
+    blockUpdateAt: "2028-07-01",
+    status: "recommended",
+    recommended: true,
+    compatiblePresets: nodePresets,
+  },
+  {
+    id: "nodejs22.x",
+    language: "node",
+    languageLabel: "Node.js",
+    version: "22",
+    label: "Node.js 22",
+    os: "Amazon Linux 2023",
+    deprecatedAt: "2027-04-30",
+    blockCreateAt: "2027-06-01",
+    blockUpdateAt: "2027-07-01",
+    status: "supported",
+    recommended: false,
+    compatiblePresets: nodePresets,
+  },
+  {
+    id: "python3.14",
+    language: "python",
+    languageLabel: "Python",
+    version: "3.14",
+    label: "Python 3.14",
+    os: "Amazon Linux 2023",
+    deprecatedAt: "2029-06-30",
+    blockCreateAt: "2029-07-31",
+    blockUpdateAt: "2029-08-31",
+    status: "recommended",
+    recommended: true,
+    compatiblePresets: functionPresets,
+  },
+  {
+    id: "python3.13",
+    language: "python",
+    languageLabel: "Python",
+    version: "3.13",
+    label: "Python 3.13",
+    os: "Amazon Linux 2023",
+    deprecatedAt: "2029-06-30",
+    blockCreateAt: "2029-07-31",
+    blockUpdateAt: "2029-08-31",
+    status: "supported",
+    recommended: false,
+    compatiblePresets: functionPresets,
+  },
+  {
+    id: "python3.12",
+    language: "python",
+    languageLabel: "Python",
+    version: "3.12",
+    label: "Python 3.12",
+    os: "Amazon Linux 2023",
+    deprecatedAt: "2028-10-31",
+    blockCreateAt: "2028-11-30",
+    blockUpdateAt: "2029-01-10",
+    status: "supported",
+    recommended: false,
+    compatiblePresets: functionPresets,
+  },
+  {
+    id: "python3.11",
+    language: "python",
+    languageLabel: "Python",
+    version: "3.11",
+    label: "Python 3.11",
+    os: "Amazon Linux 2",
+    deprecatedAt: "2027-06-30",
+    blockCreateAt: "2027-07-31",
+    blockUpdateAt: "2027-08-31",
+    status: "supported",
+    recommended: false,
+    compatiblePresets: functionPresets,
+  },
+  {
+    id: "python3.10",
+    language: "python",
+    languageLabel: "Python",
+    version: "3.10",
+    label: "Python 3.10",
+    os: "Amazon Linux 2",
+    deprecatedAt: "2026-10-31",
+    blockCreateAt: "2027-02-01",
+    blockUpdateAt: "2027-03-03",
+    status: "supported",
+    recommended: false,
+    compatiblePresets: functionPresets,
+  },
+  {
+    id: "java25",
+    language: "java",
+    languageLabel: "Java",
+    version: "25",
+    label: "Java 25",
+    os: "Amazon Linux 2023",
+    deprecatedAt: "2029-06-30",
+    blockCreateAt: "2029-07-31",
+    blockUpdateAt: "2029-08-31",
+    status: "recommended",
+    recommended: true,
+    compatiblePresets: functionPresets,
+  },
+  {
+    id: "java21",
+    language: "java",
+    languageLabel: "Java",
+    version: "21",
+    label: "Java 21",
+    os: "Amazon Linux 2023",
+    deprecatedAt: "2029-06-30",
+    blockCreateAt: "2029-07-31",
+    blockUpdateAt: "2029-08-31",
+    status: "supported",
+    recommended: false,
+    compatiblePresets: functionPresets,
+  },
+  {
+    id: "java17.al2023",
+    language: "java",
+    languageLabel: "Java",
+    version: "17",
+    label: "Java 17 (AL2023)",
+    os: "Amazon Linux 2023",
+    deprecatedAt: "2029-06-30",
+    blockCreateAt: "2029-07-31",
+    blockUpdateAt: "2029-08-31",
+    status: "supported",
+    recommended: false,
+    compatiblePresets: functionPresets,
+  },
+  {
+    id: "java11.al2023",
+    language: "java",
+    languageLabel: "Java",
+    version: "11",
+    label: "Java 11 (AL2023)",
+    os: "Amazon Linux 2023",
+    deprecatedAt: "2029-06-30",
+    blockCreateAt: "2029-07-31",
+    blockUpdateAt: "2029-08-31",
+    status: "supported",
+    recommended: false,
+    compatiblePresets: functionPresets,
+  },
+  {
+    id: "java8.al2023",
+    language: "java",
+    languageLabel: "Java",
+    version: "8",
+    label: "Java 8 (AL2023)",
+    os: "Amazon Linux 2023",
+    deprecatedAt: "2029-06-30",
+    blockCreateAt: "2029-07-31",
+    blockUpdateAt: "2029-08-31",
+    status: "supported",
+    recommended: false,
+    compatiblePresets: functionPresets,
+  },
+  {
+    id: "java17",
+    language: "java",
+    languageLabel: "Java",
+    version: "17",
+    label: "Java 17 (AL2)",
+    os: "Amazon Linux 2",
+    deprecatedAt: "2027-06-30",
+    blockCreateAt: "2027-07-31",
+    blockUpdateAt: "2027-08-31",
+    status: "supported",
+    recommended: false,
+    compatiblePresets: functionPresets,
+  },
+  {
+    id: "java11",
+    language: "java",
+    languageLabel: "Java",
+    version: "11",
+    label: "Java 11 (AL2)",
+    os: "Amazon Linux 2",
+    deprecatedAt: "2027-06-30",
+    blockCreateAt: "2027-07-31",
+    blockUpdateAt: "2027-08-31",
+    status: "supported",
+    recommended: false,
+    compatiblePresets: functionPresets,
+  },
+  {
+    id: "java8.al2",
+    language: "java",
+    languageLabel: "Java",
+    version: "8",
+    label: "Java 8 (AL2)",
+    os: "Amazon Linux 2",
+    deprecatedAt: "2027-06-30",
+    blockCreateAt: "2027-07-31",
+    blockUpdateAt: "2027-08-31",
+    status: "supported",
+    recommended: false,
+    compatiblePresets: functionPresets,
+  },
+  {
+    id: "dotnet10",
+    language: "dotnet",
+    languageLabel: ".NET",
+    version: "10",
+    label: ".NET 10",
+    os: "Amazon Linux 2023",
+    deprecatedAt: "2028-11-14",
+    blockCreateAt: "2028-12-14",
+    blockUpdateAt: "2029-01-15",
+    status: "recommended",
+    recommended: true,
+    compatiblePresets: functionPresets,
+  },
+  {
+    id: "dotnet8",
+    language: "dotnet",
+    languageLabel: ".NET",
+    version: "8",
+    label: ".NET 8",
+    os: "Amazon Linux 2023",
+    deprecatedAt: "2026-11-10",
+    blockCreateAt: "2027-02-01",
+    blockUpdateAt: "2027-03-03",
+    status: "supported",
+    recommended: false,
+    compatiblePresets: functionPresets,
+  },
+  {
+    id: "ruby4.0",
+    language: "ruby",
+    languageLabel: "Ruby",
+    version: "4.0",
+    label: "Ruby 4.0",
+    os: "Amazon Linux 2023",
+    deprecatedAt: "2029-03-31",
+    blockCreateAt: "2029-04-30",
+    blockUpdateAt: "2029-05-31",
+    status: "recommended",
+    recommended: true,
+    compatiblePresets: functionPresets,
+  },
+  {
+    id: "ruby3.4",
+    language: "ruby",
+    languageLabel: "Ruby",
+    version: "3.4",
+    label: "Ruby 3.4",
+    os: "Amazon Linux 2023",
+    deprecatedAt: "2028-03-31",
+    blockCreateAt: "2028-04-30",
+    blockUpdateAt: "2028-05-31",
+    status: "supported",
+    recommended: false,
+    compatiblePresets: functionPresets,
+  },
+  {
+    id: "ruby3.3",
+    language: "ruby",
+    languageLabel: "Ruby",
+    version: "3.3",
+    label: "Ruby 3.3",
+    os: "Amazon Linux 2023",
+    deprecatedAt: "2027-03-31",
+    blockCreateAt: "2027-04-30",
+    blockUpdateAt: "2027-05-31",
+    status: "supported",
+    recommended: false,
+    compatiblePresets: functionPresets,
+  },
+  {
+    id: "provided.al2023",
+    language: "custom",
+    languageLabel: "Custom",
+    version: "AL2023",
+    label: "Custom runtime (AL2023)",
+    os: "Amazon Linux 2023",
+    deprecatedAt: "2029-06-30",
+    blockCreateAt: "2029-07-31",
+    blockUpdateAt: "2029-08-31",
+    status: "recommended",
+    recommended: true,
+    compatiblePresets: customRuntimePresets,
+  },
+] as const satisfies readonly Omit<RuntimeCatalogueEntry, "executionModel" | "defaultPresets">[]
+
+export const RUNTIME_CATALOGUE: readonly RuntimeCatalogueEntry[] = RUNTIME_DEFINITIONS.map(
+  (entry) => ({
+    ...entry,
+    executionModel: entry.language === "custom" ? "custom" : "managed",
+    defaultPresets:
+      entry.id === "nodejs24.x"
+        ? ["next", "hono", "function"]
+        : entry.id === "provided.al2023"
+          ? ["web"]
+          : [],
+  }),
+)
+
+export const SUPPORTED_RUNTIMES = RUNTIME_CATALOGUE.map((entry) => entry.id)
+export type SupportedRuntime = (typeof RUNTIME_DEFINITIONS)[number]["id"]
+
+export function runtimeCatalogueEntry(value: string): RuntimeCatalogueEntry | undefined {
+  return RUNTIME_CATALOGUE.find((entry) => entry.id === value)
+}
+
+export function isSupportedRuntime(value: string, at = new Date()): value is SupportedRuntime {
+  const entry = runtimeCatalogueEntry(value)
+  if (entry === undefined) return false
+  return entry.selectionEndsAt === undefined || at < new Date(`${entry.selectionEndsAt}T00:00:00Z`)
+}
+
+export function isRuntimeCompatible(preset: string, runtime: string): boolean {
+  const entry = runtimeCatalogueEntry(runtime)
+  return entry !== undefined && entry.compatiblePresets.includes(preset)
+}
+
+export const DEFAULT_RUNTIME: SupportedRuntime = "nodejs24.x"
 export const DEFAULT_HANDLER = "index.handler"
 
-/**
- * What each of the deploy action's presets runs.
- *
- * The preset is the one thing the action already knows about the shape of a build, so it is the
- * right place to take a default from — a customer who picked `hono` has said enough. An unknown
- * preset falls back rather than failing: presets are added in the action's repository, which ships
- * separately, and a new one must not be a deploy that cannot start.
- */
 const PRESET_DEFAULTS: Record<string, PresetRuntime> = {
-  /*
-    `next` and `hono` are web servers, not handlers.
-
-    This is the correction to the thing that made every deployment in production fail: the presets
-    collect `.next/standalone` and `dist`, both of which contain a program that *listens on a port*,
-    and they were published claiming to export `index.handler`. Nothing exports it, so the function
-    could only ever answer `Runtime.HandlerNotFound`. See `web-adapter.ts` for why the answer is an
-    adapter rather than making every customer write a Lambda entry point.
-  */
-  next: { runtime: "nodejs22.x", handler: WEB_ADAPTER_HANDLER, webAdapter: true },
-  hono: { runtime: "nodejs22.x", handler: WEB_ADAPTER_HANDLER, webAdapter: true },
-  /*
-    Native executables are web servers too. On Lambda's provided runtime the executable at
-    `bootstrap` starts directly, while the adapter layer runs as an extension and owns the Runtime
-    API. AWS's own Rust zip examples use this provided.al2023 + bootstrap + layer shape.
-  */
+  next: { runtime: DEFAULT_RUNTIME, handler: WEB_ADAPTER_HANDLER, webAdapter: true },
+  hono: { runtime: DEFAULT_RUNTIME, handler: WEB_ADAPTER_HANDLER, webAdapter: true },
   web: { runtime: "provided.al2023", handler: "bootstrap", webAdapter: true },
-  /*
-    `static` is the exception and stays a handler.
-
-    A static build has no server to adapt; the function's whole job is to serve files out of the
-    archive, which is a handler this platform provides rather than one the customer wrote.
-  */
-  static: { runtime: "nodejs22.x", handler: DEFAULT_HANDLER, webAdapter: false },
+  function: { runtime: DEFAULT_RUNTIME, handler: DEFAULT_HANDLER, webAdapter: false },
+  static: { runtime: DEFAULT_RUNTIME, handler: DEFAULT_HANDLER, webAdapter: false },
 }
 
-export type PresetRuntime = {
-  runtime: SupportedRuntime
-  handler: string
-  /** Whether the build is an HTTP server needing the Lambda Web Adapter. */
-  webAdapter: boolean
-}
+export type PresetRuntime = { runtime: SupportedRuntime; handler: string; webAdapter: boolean }
 
 export function runtimeForPreset(preset: string): PresetRuntime {
   return (
@@ -89,8 +379,17 @@ export function runtimeForPreset(preset: string): PresetRuntime {
   )
 }
 
-/** Whether a release still follows its preset's web-server entry-point convention. */
+export function handlerForPreset(preset: string, runtime: string): string {
+  if (preset === "web") return runtime.startsWith("provided.") ? "bootstrap" : WEB_ADAPTER_HANDLER
+  return runtimeForPreset(preset).handler
+}
+
 export function webAdapterForRelease(preset: string, handler: string | undefined): boolean {
   const defaults = runtimeForPreset(preset)
-  return defaults.webAdapter && (handler === undefined || handler === defaults.handler)
+  return (
+    defaults.webAdapter &&
+    (handler === undefined ||
+      handler === defaults.handler ||
+      (preset === "web" && (handler === "bootstrap" || handler === WEB_ADAPTER_HANDLER)))
+  )
 }

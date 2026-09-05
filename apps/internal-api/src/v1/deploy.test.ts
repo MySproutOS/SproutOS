@@ -4,6 +4,7 @@ import {
   mintDeployToken,
   readDeployToken,
   releasePreviewNumber,
+  resolveReleaseRuntime,
   staticReleaseError,
 } from "./deploy"
 
@@ -16,6 +17,70 @@ const NOW = 1_800_000_000_000
 const now = () => NOW
 const PROJECT = "01a01e12-1700-76ac-9713-dd208babdf5a"
 const USER = "01a01e12-1700-76ac-9713-dd208babdf5b"
+
+describe("release runtime resolution", () => {
+  const project = {
+    deploymentPreset: "function",
+    runtime: "python3.14",
+    handler: "app.handler",
+  }
+
+  it("resolves release overrides before matching project defaults and preset defaults", () => {
+    expect(resolveReleaseRuntime("function", {}, project)).toEqual({
+      runtime: "python3.14",
+      handler: "app.handler",
+    })
+    expect(
+      resolveReleaseRuntime("function", { runtime: "ruby3.4", handler: "main.handler" }, project),
+    ).toEqual({ runtime: "ruby3.4", handler: "main.handler" })
+    expect(
+      resolveReleaseRuntime(
+        "hono",
+        {},
+        {
+          deploymentPreset: "function",
+          runtime: "python3.14",
+          handler: "app.handler",
+        },
+      ),
+    ).toEqual({ runtime: "nodejs24.x", handler: "run.sh" })
+  })
+
+  it("resolves runtime and handler overrides independently", () => {
+    expect(resolveReleaseRuntime("function", { runtime: "ruby3.4" }, project)).toEqual({
+      runtime: "ruby3.4",
+      handler: "app.handler",
+    })
+  })
+
+  it("requires function handlers to come from the release or matching project", () => {
+    expect(
+      resolveReleaseRuntime(
+        "function",
+        {},
+        {
+          deploymentPreset: null,
+          runtime: null,
+          handler: null,
+        },
+      ),
+    ).toEqual({ runtime: "nodejs24.x", handler: null })
+  })
+
+  it("uses bootstrap for a custom-runtime web executable and no runtime for non-Lambda presets", () => {
+    expect(
+      resolveReleaseRuntime(
+        "web",
+        {},
+        { deploymentPreset: "web", runtime: "provided.al2023", handler: "bootstrap" },
+      ),
+    ).toEqual({ runtime: "provided.al2023", handler: "bootstrap" })
+    expect(resolveReleaseRuntime("static", {}, project)).toEqual({
+      runtime: null,
+      handler: null,
+    })
+  })
+})
 
 describe("deploy tokens", () => {
   it("round-trips the project it was minted for", () => {
