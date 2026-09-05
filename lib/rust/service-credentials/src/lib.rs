@@ -71,10 +71,11 @@ pub struct AuthenticatedTenant {
 /// A live object-storage credential and what it belongs to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ResolvedService {
-    pub credential_id: uuid::Uuid,
+    pub credential_id: Option<uuid::Uuid>,
     pub backend_service_id: uuid::Uuid,
     pub organization_id: uuid::Uuid,
     pub project_id: Option<uuid::Uuid>,
+    pub public_read: bool,
 }
 
 /// Reads credentials from the control plane's Postgres.
@@ -321,7 +322,7 @@ impl CredentialStore {
             .map_err(|cause| StoreError::Unavailable(cause.to_string()))?;
 
         let statement = "
-            select c.id, s.id, s.organization_id, s.project_id
+            select c.id, s.id, s.organization_id, s.project_id, s.public_read
               from service_credential c
               join backend_service s on s.id = c.backend_service_id
               join organization o on o.id = s.organization_id
@@ -343,10 +344,47 @@ impl CredentialStore {
         };
 
         Ok(Some(ResolvedService {
-            credential_id: row.get(0),
+            credential_id: Some(row.get(0)),
             backend_service_id: row.get(1),
             organization_id: row.get(2),
             project_id: row.get(3),
+            public_read: row.get(4),
+        }))
+    }
+
+    /// Resolves a logical object-storage bucket for an anonymous object read.
+    pub async fn resolve_public_storage(
+        &self,
+        backend_service_id: uuid::Uuid,
+    ) -> Result<Option<ResolvedService>, StoreError> {
+        let client = tokio::time::timeout(LOOKUP_TIMEOUT, self.pool.get())
+            .await
+            .map_err(|_| StoreError::Unavailable("timed out waiting for a connection".into()))?
+            .map_err(|cause| StoreError::Unavailable(cause.to_string()))?;
+        let statement = "
+            select s.id, s.organization_id, s.project_id, s.public_read
+              from backend_service s
+              join organization o on o.id = s.organization_id
+             where s.id = $1
+               and s.kind = 'object_storage'
+               and s.deleted_at is null
+               and s.status = 'active'
+               and o.deleted_at is null
+        ";
+        let row = tokio::time::timeout(
+            LOOKUP_TIMEOUT,
+            client.query_opt(statement, &[&backend_service_id]),
+        )
+        .await
+        .map_err(|_| StoreError::Unavailable("the public storage lookup timed out".into()))?
+        .map_err(|cause| StoreError::Unavailable(cause.to_string()))?;
+
+        Ok(row.map(|row| ResolvedService {
+            credential_id: None,
+            backend_service_id: row.get(0),
+            organization_id: row.get(1),
+            project_id: row.get(2),
+            public_read: row.get(3),
         }))
     }
 

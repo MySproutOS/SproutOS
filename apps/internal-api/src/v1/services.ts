@@ -1,6 +1,7 @@
 import { lockAvailableBalance } from "@lib/billing"
 import {
   crudAuditLog,
+  crudBackendService,
   crudProjectEnvVar,
   fetchBackendService,
   fetchCreditRetentionState,
@@ -36,6 +37,8 @@ import {
   servicesSchemaCreateRequest,
   servicesSchemaIdParam,
   servicesSchemaListResponse,
+  servicesSchemaObjectStorageAccessRequest,
+  servicesSchemaObjectStorageAccessResponse,
 } from "./services.serializer"
 
 const errorResponse = {
@@ -280,6 +283,7 @@ const app = new Hono()
           "backendService.kind as kind",
           "backendService.status as status",
           "backendService.projectId as projectId",
+          "backendService.publicRead as publicRead",
           "backendService.createdAt as createdAt",
           "databaseRole.roleName as username",
           "oauthClient.id as managedByOauthClientId",
@@ -308,6 +312,7 @@ const app = new Hono()
                 ? null
                 : { clientId: row.managedByOauthClientId, name: row.managedByOauthAppName },
             ...(row.kind === "valkey" ? { keyPrefix: valkeyKeyPrefix(row.id) } : {}),
+            publicRead: row.kind === "object_storage" ? row.publicRead : null,
             createdAt: row.createdAt.toISOString(),
           }
         }),
@@ -394,6 +399,10 @@ const app = new Hono()
       const body = c.req.valid("json")
       const organization = c.var.organization
 
+      if (body.publicRead !== undefined && body.kind !== "object_storage") {
+        return throwBadRequest(c, "Public read is available only for object storage")
+      }
+
       if (await fetchCreditRetentionState(db).isUsageSuspended(organization.id)) {
         return throwError(
           c,
@@ -446,6 +455,7 @@ const app = new Hono()
             name: body.name,
             kind: body.kind,
             status: "provisioning",
+            publicRead: body.kind === "object_storage" ? (body.publicRead ?? false) : false,
           })
           .execute()
         return true
@@ -559,6 +569,56 @@ const app = new Hono()
 
         throw error
       }
+    },
+  )
+  .patch(
+    "/:orgSlug/services/:serviceId/object-storage-access",
+    describeRoute({
+      description: "Changes the default anonymous-read policy for an object-storage service",
+      responses: {
+        200: {
+          description: "Updated object-storage access policy",
+          content: {
+            "application/json": { schema: resolver(servicesSchemaObjectStorageAccessResponse) },
+          },
+        },
+        400: { description: "The service is not active object storage", ...errorResponse },
+        403: { description: "Caller lacks database:update", ...errorResponse },
+        404: { description: "No such service", ...errorResponse },
+      },
+    }),
+    requirePermission("database:update"),
+    validator("param", servicesSchemaIdParam),
+    validator("json", servicesSchemaObjectStorageAccessRequest),
+    async (c) => {
+      const { serviceId } = c.req.valid("param")
+      const { publicRead } = c.req.valid("json")
+      const service = await fetchBackendService(db).getInOrganization(
+        c.var.organization.id,
+        serviceId,
+        ["id", "kind", "status", "publicRead"],
+      )
+      if (service === undefined) return throwNotFound(c, "Service not found")
+      if (service.kind !== "object_storage" || service.status !== "active") {
+        return throwBadRequest(c, "Only active object storage can change public access")
+      }
+
+      const updated = await crudBackendService(db).update(c.var.organization.id, service.id, {
+        publicRead,
+      })
+      if (updated === undefined) return throwNotFound(c, "Service not found")
+
+      await crudAuditLog(db).record({
+        organizationId: c.var.organization.id,
+        actorUserId: c.var.user.id,
+        action: "database:update",
+        resourceSrn: srnFor("db", c.var.organization.id, "service", service.id),
+        before: { publicRead: service.publicRead },
+        after: { publicRead },
+        ...auditContext(c),
+      })
+
+      return c.json({ id: service.id, publicRead })
     },
   )
   .post(

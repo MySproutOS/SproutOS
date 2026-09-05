@@ -112,6 +112,7 @@ import {
   patchV1OrgsByOrgSlugProjectsByProjectId,
   patchV1OrgsByOrgSlugProjectsByProjectIdWorkflowsByWorkflowIdRunsByRunIdJob,
   patchV1OrgsByOrgSlugRolesByRoleId,
+  patchV1OrgsByOrgSlugServicesByServiceIdObjectStorageAccess,
   patchV1UserMePreferences,
   patchV1UserMeProfile,
   postV1ApkSigningComplete,
@@ -474,6 +475,9 @@ import type {
   PatchV1OrgsByOrgSlugRolesByRoleIdData,
   PatchV1OrgsByOrgSlugRolesByRoleIdError,
   PatchV1OrgsByOrgSlugRolesByRoleIdResponse,
+  PatchV1OrgsByOrgSlugServicesByServiceIdObjectStorageAccessData,
+  PatchV1OrgsByOrgSlugServicesByServiceIdObjectStorageAccessError,
+  PatchV1OrgsByOrgSlugServicesByServiceIdObjectStorageAccessResponse,
   PatchV1UserMePreferencesData,
   PatchV1UserMePreferencesResponse,
   PatchV1UserMeProfileData,
@@ -3189,6 +3193,33 @@ export const getV1OrgsByOrgSlugServicesByServiceIdConnectionOptions = (
     },
     queryKey: getV1OrgsByOrgSlugServicesByServiceIdConnectionQueryKey(options),
   })
+
+/**
+ * Changes the default anonymous-read policy for an object-storage service
+ */
+export const patchV1OrgsByOrgSlugServicesByServiceIdObjectStorageAccessMutation = (
+  options?: Partial<Options<PatchV1OrgsByOrgSlugServicesByServiceIdObjectStorageAccessData>>,
+): UseMutationOptions<
+  PatchV1OrgsByOrgSlugServicesByServiceIdObjectStorageAccessResponse,
+  PatchV1OrgsByOrgSlugServicesByServiceIdObjectStorageAccessError,
+  Options<PatchV1OrgsByOrgSlugServicesByServiceIdObjectStorageAccessData>
+> => {
+  const mutationOptions: UseMutationOptions<
+    PatchV1OrgsByOrgSlugServicesByServiceIdObjectStorageAccessResponse,
+    PatchV1OrgsByOrgSlugServicesByServiceIdObjectStorageAccessError,
+    Options<PatchV1OrgsByOrgSlugServicesByServiceIdObjectStorageAccessData>
+  > = {
+    mutationFn: async (fnOptions) => {
+      const { data } = await patchV1OrgsByOrgSlugServicesByServiceIdObjectStorageAccess({
+        ...options,
+        ...fnOptions,
+        throwOnError: true,
+      })
+      return data
+    },
+  }
+  return mutationOptions
+}
 
 /**
  * Issues a new password and invalidates the old URI

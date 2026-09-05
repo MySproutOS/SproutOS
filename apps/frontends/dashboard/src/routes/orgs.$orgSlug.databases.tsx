@@ -5,12 +5,14 @@ import {
   DatabaseIcon,
   EyeIcon,
   GitBranchIcon,
+  Globe2Icon,
   PlusIcon,
   RefreshCwIcon,
   Trash2Icon,
 } from "lucide-react"
 import { useState } from "react"
 import { Badge } from "@ui/base/ui/badge"
+import { Alert, AlertDescription } from "@ui/base/ui/alert"
 import { Button } from "@ui/base/ui/button"
 import {
   Dialog,
@@ -31,6 +33,7 @@ import {
 import { Input } from "@ui/base/ui/input"
 import { Label } from "@ui/base/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@ui/base/ui/select"
+import { Switch } from "@ui/base/ui/switch"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@ui/base/ui/table"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@ui/base/ui/tooltip"
 import { ListError, ListSkeleton } from "@frontends/dashboard/components/list-states"
@@ -50,6 +53,7 @@ import {
   useDeleteDatabaseBranch,
   useDatabaseBranches,
   parseObjectStorageConnection,
+  useObjectStorageAccess,
   useRotateConnection,
   useRotateDatabaseBranch,
   useViewObjectStorageConnection,
@@ -135,6 +139,11 @@ function DatabasesList() {
                         Managed by {service.managedByOauthApp.name}
                       </span>
                     )}
+                    {service.publicRead !== null && (
+                      <span className="block text-[11px] text-muted-foreground">
+                        {service.publicRead ? "Public reads enabled" : "Private by default"}
+                      </span>
+                    )}
                   </TableCell>
                   <TableCell>
                     <Badge variant="muted">{KIND_LABELS[service.kind]}</Badge>
@@ -169,8 +178,11 @@ function RowActions({ orgSlug, service }: { orgSlug: string; service: BackendSer
         <BranchesButton orgSlug={orgSlug} service={service} />
       )}
       <RotateButton orgSlug={orgSlug} service={service} onRotated={setUri} />
-      {service.kind === "object_storage" && (
-        <ViewObjectStorageButton orgSlug={orgSlug} service={service} onViewed={setUri} />
+      {service.kind === "object_storage" && service.status === "active" && (
+        <>
+          <PublicAccessButton orgSlug={orgSlug} service={service} />
+          <ViewObjectStorageButton orgSlug={orgSlug} service={service} onViewed={setUri} />
+        </>
       )}
       <DeleteButton orgSlug={orgSlug} service={service} />
 
@@ -185,6 +197,79 @@ function RowActions({ orgSlug, service }: { orgSlug: string; service: BackendSer
         />
       )}
     </span>
+  )
+}
+
+function PublicAccessButton({ orgSlug, service }: { orgSlug: string; service: BackendService }) {
+  const [open, setOpen] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const { setPublicRead, isPending } = useObjectStorageAccess(orgSlug)
+  const enabled = service.publicRead === true
+
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        setOpen(next)
+        if (!next) setError(null)
+      }}
+    >
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <DialogTrigger
+              render={
+                <Button variant="ghost" size="sm">
+                  <Globe2Icon />
+                  <span className="sr-only">Public access for {service.name}</span>
+                </Button>
+              }
+            />
+          }
+        />
+        <TooltipContent>{enabled ? "Disable public reads" : "Enable public reads"}</TooltipContent>
+      </Tooltip>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>
+            {enabled ? "Make objects private by default?" : "Enable public reads?"}
+          </DialogTitle>
+          <DialogDescription>
+            {enabled
+              ? "Objects without an explicit public-read override will stop being anonymously readable."
+              : "Every object without an explicit private override will be readable by anyone who knows its URL."}
+          </DialogDescription>
+        </DialogHeader>
+        {!enabled && (
+          <Alert>
+            <AlertDescription>
+              Public URLs are bearer-free and may be copied or cached. Disabling this setting cannot
+              revoke copies that were already downloaded.
+            </AlertDescription>
+          </Alert>
+        )}
+        {error !== null && <p className="text-sm text-destructive">{error}</p>}
+        <DialogFooter>
+          <DialogClose render={<Button variant="outline">Cancel</Button>} />
+          <Button
+            variant={enabled ? "outline" : "default"}
+            disabled={isPending}
+            onClick={() => {
+              setError(null)
+              setPublicRead(service.id, !enabled)
+                .then(() => {
+                  setOpen(false)
+                })
+                .catch(() => {
+                  setError("Could not update public access")
+                })
+            }}
+          >
+            {enabled ? "Make private by default" : "Enable public reads"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   )
 }
 
@@ -668,6 +753,7 @@ function CreateDialog({ orgSlug }: { orgSlug: string }) {
   */
   const [kind, setKind] = useState<ServiceKind>(FIRST_AVAILABLE_KIND)
   const [projectId, setProjectId] = useState("standalone")
+  const [publicRead, setPublicRead] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [open, setOpen] = useState(false)
   const [uri, setUri] = useState<string | null>(null)
@@ -683,12 +769,14 @@ function CreateDialog({ orgSlug }: { orgSlug: string }) {
       name: name.trim(),
       kind,
       ...(projectId === "standalone" ? {} : { projectId }),
+      ...(kind === "object_storage" ? { publicRead } : {}),
     })
       .then((connectionUri) => {
         // Captured before the field is cleared: the URI dialog names the database, and resetting
         // first made it say "your new database" for something the person had just named.
         setCreatedName(name.trim())
         setName("")
+        setPublicRead(false)
         setOpen(false)
         // Shown once, immediately. Nothing stores it, so losing this dialog means rotating it.
         setUri(connectionUri)
@@ -767,6 +855,21 @@ function CreateDialog({ orgSlug }: { orgSlug: string }) {
                   ))}
                 </SelectContent>
               </Select>
+              {kind === "object_storage" && (
+                <div className="flex items-center justify-between gap-4 rounded-lg border border-border p-3">
+                  <div className="flex flex-col gap-1">
+                    <Label htmlFor="storage-public-read">Public reads</Label>
+                    <p className="text-xs text-muted-foreground">
+                      Allow plain object URLs unless an object is explicitly private.
+                    </p>
+                  </div>
+                  <Switch
+                    id="storage-public-read"
+                    checked={publicRead}
+                    onCheckedChange={setPublicRead}
+                  />
+                </div>
+              )}
               {!KIND_AVAILABLE[kind] && (
                 <p className="text-xs text-muted-foreground">
                   {KIND_LABELS[kind]} is not available on this deployment yet.

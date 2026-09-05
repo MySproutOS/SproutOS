@@ -25,12 +25,9 @@
 //! The same argument retired the per-tenant CouchDB. It also lifts a ceiling nobody would have
 //! found until it hit: an AWS account allows 5,000 IAM users.
 //!
-//! ## What is deliberately not supported
-//!
-//! **Presigned URLs** (`X-Amz-Algorithm` in the query string). They are a signature over a request
-//! that has not happened yet, with its own expiry rules, and no client this serves uses them —
-//! `livesync` signs every request with a header. They are refused with a message that says so,
-//! rather than falling through to a 403 that reads like a wrong key.
+//! Header-authenticated and query-presigned SigV4 requests pass through the same live credential,
+//! service-status, bucket, and credit checks. Presigned requests may live for at most seven days,
+//! matching the SigV4 maximum, but rotating the credential revokes them immediately.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -38,13 +35,14 @@ use std::time::{Duration, SystemTime};
 
 use aws_credential_types::Credentials;
 use aws_credential_types::provider::{ProvideCredentials, SharedCredentialsProvider};
+use chrono::{DateTime, NaiveDateTime, Utc};
 use sproutos_s3_sigv4::{
     AuthorizationHeader, CanonicalRequest, STREAMING_PAYLOAD, STREAMING_UNSIGNED_PAYLOAD_TRAILER,
     UNSIGNED_PAYLOAD, canonical_query, parse_authorization, sha256_hex, sign, string_to_sign,
     verify,
 };
 use sproutos_service_credentials::{CredentialStore, ResolvedService};
-use sproutos_tenant_auth::encode_short_id;
+use sproutos_tenant_auth::{IdPart, decode_short_id, encode_short_id};
 
 /// The platform's own credential for the backing store.
 #[derive(Debug, Clone)]
@@ -163,8 +161,8 @@ pub enum Denied {
     #[error("no Authorization header")]
     Unsigned,
 
-    #[error("presigned URLs are not supported by this endpoint; sign the request with a header")]
-    Presigned,
+    #[error("the presigned URL has expired or is not active yet")]
+    Expired,
 
     #[error("the Authorization header is not usable: {0}")]
     Malformed(&'static str),
@@ -204,12 +202,12 @@ impl Denied {
     /// caller made in the open and can only fix if told.
     pub fn as_s3_error(&self) -> (u16, &'static str, String) {
         match self {
-            Denied::Presigned | Denied::Malformed(_) | Denied::NoBucket => {
-                (400, "InvalidRequest", self.to_string())
-            }
-            Denied::Unsigned | Denied::UnknownKey | Denied::BadSignature | Denied::WrongBucket => {
-                (403, "AccessDenied", OPAQUE_DENIAL.to_owned())
-            }
+            Denied::Malformed(_) | Denied::NoBucket => (400, "InvalidRequest", self.to_string()),
+            Denied::Unsigned
+            | Denied::Expired
+            | Denied::UnknownKey
+            | Denied::BadSignature
+            | Denied::WrongBucket => (403, "AccessDenied", OPAQUE_DENIAL.to_owned()),
         }
     }
 }
@@ -237,6 +235,10 @@ pub fn bucket_from_path(path: &str) -> Option<&str> {
 /// stored connection URI and every signature computed against it.
 pub fn bucket_for(backend_service_id: uuid::Uuid) -> String {
     format!("v-{}", encode_short_id(backend_service_id))
+}
+
+pub fn service_id_from_bucket(bucket: &str) -> Option<uuid::Uuid> {
+    decode_short_id(bucket.strip_prefix("v-")?, IdPart::Resource).ok()
 }
 
 /// Why a request could not be rewritten onto the shared bucket.
@@ -333,6 +335,28 @@ pub fn upstream_query(tenant_bucket: &str, query: &str) -> Result<String, Rewrit
     ));
     parts.sort();
     Ok(parts.join("&"))
+}
+
+/// Removes the query fields that authenticated the client request before the proxy signs upstream.
+pub fn operation_query(query: &str) -> String {
+    const AUTH_FIELDS: [&str; 7] = [
+        "X-Amz-Algorithm",
+        "X-Amz-Credential",
+        "X-Amz-Date",
+        "X-Amz-Expires",
+        "X-Amz-SignedHeaders",
+        "X-Amz-Signature",
+        "X-Amz-Security-Token",
+    ];
+    query
+        .split('&')
+        .filter(|part| !part.is_empty())
+        .filter(|part| {
+            let key = part.split_once('=').map_or(*part, |(key, _)| key);
+            !AUTH_FIELDS.contains(&key)
+        })
+        .collect::<Vec<_>>()
+        .join("&")
 }
 
 /// Percent-encoding for a query value, escaping everything S3 does not treat as unreserved.
@@ -501,18 +525,113 @@ pub fn payload_hash(request: &IncomingRequest<'_>) -> Result<String, Denied> {
     }
 }
 
-/// Parse the `Authorization` header, refusing what this endpoint does not serve.
-pub fn authorization(request: &IncomingRequest<'_>) -> Result<AuthorizationHeader, Denied> {
-    if request.query.contains("X-Amz-Algorithm=") {
-        return Err(Denied::Presigned);
-    }
-
+fn header_authorization(request: &IncomingRequest<'_>) -> Result<AuthorizationHeader, Denied> {
     let header = request
         .headers
         .get("authorization")
         .ok_or(Denied::Unsigned)?;
 
     parse_authorization(header).map_err(|_| Denied::Malformed("not an AWS4-HMAC-SHA256 header"))
+}
+
+struct RequestAuthorization {
+    auth: AuthorizationHeader,
+    canonical_query: Option<String>,
+    amz_date: Option<String>,
+    payload_hash: Option<&'static str>,
+}
+
+fn query_parameter<'a>(pairs: &'a [(&str, &str)], name: &str) -> Result<&'a str, Denied> {
+    let values = pairs
+        .iter()
+        .filter_map(|(key, value)| (*key == name).then_some(*value))
+        .collect::<Vec<_>>();
+    match values.as_slice() {
+        [value] => Ok(value),
+        [] => Err(Denied::Malformed(
+            "a required presigned parameter is missing",
+        )),
+        _ => Err(Denied::Malformed("a presigned parameter was repeated")),
+    }
+}
+
+fn request_authorization_at(
+    request: &IncomingRequest<'_>,
+    now: DateTime<Utc>,
+) -> Result<RequestAuthorization, Denied> {
+    let pairs = request
+        .query
+        .split('&')
+        .filter(|part| !part.is_empty())
+        .map(|part| part.split_once('=').unwrap_or((part, "")))
+        .collect::<Vec<_>>();
+    let presigned = pairs.iter().any(|(key, _)| *key == "X-Amz-Algorithm");
+    if !presigned {
+        return Ok(RequestAuthorization {
+            auth: header_authorization(request)?,
+            canonical_query: None,
+            amz_date: None,
+            payload_hash: None,
+        });
+    }
+    if query_parameter(&pairs, "X-Amz-Algorithm")? != "AWS4-HMAC-SHA256" {
+        return Err(Denied::Malformed(
+            "the presigned algorithm is not AWS4-HMAC-SHA256",
+        ));
+    }
+    let credential = percent_decode(query_parameter(&pairs, "X-Amz-Credential")?).ok_or(
+        Denied::Malformed("the presigned credential is not encoded correctly"),
+    )?;
+    let signed_headers = percent_decode(query_parameter(&pairs, "X-Amz-SignedHeaders")?).ok_or(
+        Denied::Malformed("the presigned header list is not encoded correctly"),
+    )?;
+    let signature = query_parameter(&pairs, "X-Amz-Signature")?;
+    let amz_date = query_parameter(&pairs, "X-Amz-Date")?.to_owned();
+    let expires = query_parameter(&pairs, "X-Amz-Expires")?
+        .parse::<i64>()
+        .map_err(|_| Denied::Malformed("the presigned expiry is not an integer"))?;
+    if !(1..=604_800).contains(&expires) {
+        return Err(Denied::Malformed(
+            "the presigned expiry must be from 1 to 604800 seconds",
+        ));
+    }
+    let signed_at = NaiveDateTime::parse_from_str(&amz_date, "%Y%m%dT%H%M%SZ")
+        .map_err(|_| Denied::Malformed("the presigned date is malformed"))?
+        .and_utc();
+    if signed_at > now + chrono::Duration::minutes(15)
+        || now > signed_at + chrono::Duration::seconds(expires)
+    {
+        return Err(Denied::Expired);
+    }
+    if pairs.iter().any(|(key, _)| *key == "X-Amz-Security-Token") {
+        return Err(Denied::Malformed("session tokens are not supported"));
+    }
+    let auth = parse_authorization(&format!(
+        "AWS4-HMAC-SHA256 Credential={credential}, SignedHeaders={signed_headers}, Signature={signature}"
+    ))
+    .map_err(|_| Denied::Malformed("the presigned credential is malformed"))?;
+    if auth.credential.date != amz_date.get(..8).unwrap_or_default()
+        || auth.credential.service != "s3"
+        || !auth.signed_headers.iter().any(|header| header == "host")
+    {
+        return Err(Denied::Malformed("the presigned scope is invalid"));
+    }
+    let query_without_signature = pairs
+        .iter()
+        .filter(|(key, _)| *key != "X-Amz-Signature")
+        .map(|(key, value)| format!("{key}={value}"))
+        .collect::<Vec<_>>()
+        .join("&");
+    Ok(RequestAuthorization {
+        auth,
+        canonical_query: Some(canonical_query(&query_without_signature)),
+        amz_date: Some(amz_date),
+        payload_hash: Some(UNSIGNED_PAYLOAD),
+    })
+}
+
+fn request_authorization(request: &IncomingRequest<'_>) -> Result<RequestAuthorization, Denied> {
+    request_authorization_at(request, Utc::now())
 }
 
 /// Rebuild the string the client signed and check the signature against the derived secret.
@@ -574,6 +693,36 @@ pub fn check_signature_with_payload_hash(
     verify(secret, &auth.credential, &to_sign, &auth.signature).map_err(|_| Denied::BadSignature)
 }
 
+fn check_presigned_signature(
+    request: &IncomingRequest<'_>,
+    authorization: &RequestAuthorization,
+    secret: &str,
+) -> Result<(), Denied> {
+    let headers = canonical_headers(&authorization.auth.signed_headers, &request.headers)?;
+    let signed = authorization.auth.signed_headers.join(";");
+    let canonical = CanonicalRequest {
+        method: request.method,
+        path: request.path,
+        query: authorization.canonical_query.as_deref().unwrap_or_default(),
+        canonical_headers: &headers,
+        signed_headers: &signed,
+        payload_hash: authorization.payload_hash.unwrap_or(UNSIGNED_PAYLOAD),
+    };
+    let amz_date = authorization.amz_date.as_deref().unwrap_or_default();
+    let to_sign = string_to_sign(
+        amz_date,
+        &authorization.auth.credential.as_scope(),
+        &canonical.to_string_form(),
+    );
+    verify(
+        secret,
+        &authorization.auth.credential,
+        &to_sign,
+        &authorization.auth.signature,
+    )
+    .map_err(|_| Denied::BadSignature)
+}
+
 /// The request as it will leave for the backing store.
 #[derive(Debug, Clone, Copy)]
 pub struct OutgoingRequest<'a> {
@@ -586,6 +735,10 @@ pub struct OutgoingRequest<'a> {
     pub payload_hash: &'a str,
     pub amz_date: &'a str,
     pub content_type: Option<&'a str>,
+    pub cache_control: Option<&'a str>,
+    pub content_disposition: Option<&'a str>,
+    pub content_encoding: Option<&'a str>,
+    pub tagging: Option<&'a str>,
 }
 
 /// The headers to send upstream, signed with the platform's credential.
@@ -610,6 +763,10 @@ pub fn upstream_headers(
         payload_hash,
         amz_date,
         content_type,
+        cache_control,
+        content_disposition,
+        content_encoding,
+        tagging,
     } = *outgoing;
 
     let mut headers = BTreeMap::new();
@@ -621,6 +778,18 @@ pub fn upstream_headers(
     }
     if let Some(value) = content_type {
         headers.insert("content-type".to_owned(), value.to_owned());
+    }
+    if let Some(value) = cache_control {
+        headers.insert("cache-control".to_owned(), value.to_owned());
+    }
+    if let Some(value) = content_disposition {
+        headers.insert("content-disposition".to_owned(), value.to_owned());
+    }
+    if let Some(value) = content_encoding {
+        headers.insert("content-encoding".to_owned(), value.to_owned());
+    }
+    if let Some(value) = tagging {
+        headers.insert("x-amz-tagging".to_owned(), value.to_owned());
     }
 
     let signed = headers.keys().cloned().collect::<Vec<_>>().join(";");
@@ -674,7 +843,8 @@ pub async fn prepare_authorization(
     proxy: &Proxy,
     request: &IncomingRequest<'_>,
 ) -> Result<PreparedAuthorization, Denied> {
-    let auth = authorization(request)?;
+    let authorization = request_authorization(request)?;
+    let auth = authorization.auth.clone();
 
     let resolved = proxy
         .store
@@ -697,17 +867,22 @@ pub async fn prepare_authorization(
     // independent of the body, so verify it now, before the handler allocates any body bytes. This
     // turns a forged request carrying a real-looking access-key id into a small 403 rather than a
     // 16 MiB allocation. Requests carrying an actual payload digest are completed after buffering.
-    let signature_checked = request
-        .headers
-        .get("x-amz-content-sha256")
-        .is_some_and(|hash| {
-            matches!(
-                hash.as_str(),
-                UNSIGNED_PAYLOAD | STREAMING_UNSIGNED_PAYLOAD_TRAILER
-            )
-        });
+    let signature_checked = authorization.payload_hash.is_some()
+        || request
+            .headers
+            .get("x-amz-content-sha256")
+            .is_some_and(|hash| {
+                matches!(
+                    hash.as_str(),
+                    UNSIGNED_PAYLOAD | STREAMING_UNSIGNED_PAYLOAD_TRAILER
+                )
+            });
     if signature_checked {
-        check_signature(request, &auth, &secret)?;
+        if authorization.payload_hash.is_some() {
+            check_presigned_signature(request, &authorization, &secret)?;
+        } else {
+            check_signature(request, &auth, &secret)?;
+        }
     }
 
     Ok(PreparedAuthorization {
@@ -749,7 +924,9 @@ pub async fn finish_authorization_with_payload_hash(
         return Err(Denied::WrongBucket);
     }
 
-    proxy.store.mark_used(prepared.resolved.credential_id).await;
+    if let Some(credential_id) = prepared.resolved.credential_id {
+        proxy.store.mark_used(credential_id).await;
+    }
     Ok(prepared.resolved)
 }
 
@@ -766,7 +943,10 @@ pub async fn authorize(
 mod tests {
     use super::*;
     use aws_credential_types::provider::future;
+    use sproutos_s3_sigv4::CredentialScope;
     use std::sync::atomic::{AtomicUsize, Ordering};
+
+    const EXAMPLE_SECRET: &str = "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY";
 
     fn headers(pairs: &[(&str, &str)]) -> BTreeMap<String, String> {
         pairs
@@ -1027,8 +1207,7 @@ mod tests {
     }
 
     #[test]
-    fn refuses_a_presigned_url_with_a_reason() {
-        // Rather than a 403, which a customer reads as a wrong key and cannot act on.
+    fn refuses_an_incomplete_presigned_url() {
         let request = IncomingRequest {
             method: "GET",
             path: "/v-abc/one.md",
@@ -1037,7 +1216,84 @@ mod tests {
             body: b"",
         };
 
-        assert_eq!(authorization(&request), Err(Denied::Presigned));
+        assert!(matches!(
+            request_authorization(&request),
+            Err(Denied::Malformed(_))
+        ));
+    }
+
+    #[test]
+    fn verifies_a_presigned_request_and_removes_only_its_authentication_query() {
+        let now = DateTime::parse_from_rfc3339("2026-09-05T12:05:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let scope = CredentialScope {
+            access_key_id: "SPROUTEXAMPLE01".into(),
+            date: "20260905".into(),
+            region: "us-east-1".into(),
+            service: "s3".into(),
+        };
+        let unsigned_query = "X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=SPROUTEXAMPLE01%2F20260905%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20260905T120000Z&X-Amz-Expires=604800&X-Amz-SignedHeaders=host&partNumber=1&uploadId=abc";
+        let canonical = CanonicalRequest {
+            method: "PUT",
+            path: "/v-abc/file.bin",
+            query: &canonical_query(unsigned_query),
+            canonical_headers: "host:storage.example.com\n",
+            signed_headers: "host",
+            payload_hash: UNSIGNED_PAYLOAD,
+        };
+        let signature = sign(
+            EXAMPLE_SECRET,
+            &scope,
+            &string_to_sign(
+                "20260905T120000Z",
+                &scope.as_scope(),
+                &canonical.to_string_form(),
+            ),
+        );
+        let query = format!("{unsigned_query}&X-Amz-Signature={signature}");
+        let request = IncomingRequest {
+            method: "PUT",
+            path: "/v-abc/file.bin",
+            query: &query,
+            headers: headers(&[("host", "storage.example.com")]),
+            body: b"not hashed by a presigned S3 request",
+        };
+
+        let authorization = request_authorization_at(&request, now).unwrap();
+        assert_eq!(
+            check_presigned_signature(&request, &authorization, EXAMPLE_SECRET),
+            Ok(())
+        );
+        assert_eq!(operation_query(&query), "partNumber=1&uploadId=abc");
+    }
+
+    #[test]
+    fn rejects_expired_and_overlong_presigned_requests() {
+        let request = |expires: &str| {
+            IncomingRequest {
+            method: "GET",
+            path: "/v-abc/file.bin",
+            query: Box::leak(
+                format!("X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=AK%2F20260905%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20260905T120000Z&X-Amz-Expires={expires}&X-Amz-SignedHeaders=host&X-Amz-Signature=00")
+                    .into_boxed_str(),
+            ),
+            headers: headers(&[("host", "storage.example.com")]),
+            body: b"",
+        }
+        };
+        let after_expiry = DateTime::parse_from_rfc3339("2026-09-05T12:15:01Z")
+            .unwrap()
+            .with_timezone(&Utc);
+
+        assert!(matches!(
+            request_authorization_at(&request("900"), after_expiry),
+            Err(Denied::Expired)
+        ));
+        assert!(matches!(
+            request_authorization_at(&request("604801"), after_expiry),
+            Err(Denied::Malformed(_))
+        ));
     }
 
     #[test]
@@ -1055,12 +1311,13 @@ mod tests {
         assert_eq!(Denied::BadSignature.as_s3_error(), expected);
         assert_eq!(Denied::WrongBucket.as_s3_error(), expected);
         assert_eq!(Denied::Unsigned.as_s3_error(), expected);
+        assert_eq!(Denied::Expired.as_s3_error(), expected);
     }
 
     #[test]
     fn a_400_says_what_the_caller_did_wrong() {
         // A mistake made in the open, which the caller can only fix if told.
-        let (status, _, message) = Denied::Presigned.as_s3_error();
+        let (status, _, message) = Denied::Malformed("bad presigned parameter").as_s3_error();
 
         assert_eq!(status, 400);
         assert!(message.contains("presigned"));
@@ -1189,6 +1446,10 @@ mod tests {
             payload_hash: &sha256_hex(b""),
             amz_date: "20260827T120000Z",
             content_type: None,
+            cache_control: None,
+            content_disposition: None,
+            content_encoding: None,
+            tagging: None,
         };
         let first = UpstreamCredential {
             access_key_id: "ACCESS1".to_owned(),

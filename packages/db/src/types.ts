@@ -313,6 +313,7 @@ export interface BackendService {
   name: string
   organizationId: string
   projectId: string | null
+  publicRead: Generated<boolean>
   purgedAt: Timestamp | null
   regionId: string
   status: Generated<string>

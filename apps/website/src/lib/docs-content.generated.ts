@@ -1116,7 +1116,11 @@ export const GENERATED_DOC_CONTENT: Record<string, RenderableTreeNode[]> = {
               },
               children: ["Object storage"],
             },
-            " stores mutable files through an S3-compatible API.",
+            " stores mutable files through an S3-compatible API. It is",
+            " ",
+            "private by default, supports presigned browser transfers and optional anonymous object reads, and",
+            " ",
+            "uses multipart uploads when an individual request would exceed 64 MiB.",
           ],
         },
       ],
@@ -2539,7 +2543,7 @@ export const GENERATED_DOC_CONTENT: Record<string, RenderableTreeNode[]> = {
           attributes: {},
           children: ["View credentials"],
         },
-        " again. Rotation still revokes the old access immediately at the storage proxy. See ",
+        " again. An application can mint presigned URLs for supported S3 operations without handing that secret to a browser. Presigned URLs may last at most seven days, and rotation still revokes both ordinary credential use and unexpired URLs immediately at the storage proxy. See ",
         {
           $$mdtype: "Tag",
           name: "DocLink",
@@ -2548,7 +2552,7 @@ export const GENERATED_DOC_CONTENT: Record<string, RenderableTreeNode[]> = {
           },
           children: ["Use object storage"],
         },
-        " for SDK configuration and supported operations.",
+        " for SDK configuration, public-read controls, limits, and unsupported operations.",
       ],
     },
     {
@@ -4189,7 +4193,15 @@ export const GENERATED_DOC_CONTENT: Record<string, RenderableTreeNode[]> = {
       name: "p",
       attributes: {},
       children: [
-        "Request and response bodies are limited to 6 MB; use object storage for larger data. The deploy tooling refuses application bundles over 200 MB uncompressed, ahead of Lambda's 250 MB hard limit.",
+        "Application request and response bodies routed through a deployed function are limited to 6 MB. Object-storage traffic uses the separate S3-compatible storage endpoint and has a 64 MiB limit per request; use an SDK multipart upload for larger objects and keep each part at or below that limit. Presigned URLs can send browser uploads and downloads directly to that endpoint without passing the bytes through your application.",
+      ],
+    },
+    {
+      $$mdtype: "Tag",
+      name: "p",
+      attributes: {},
+      children: [
+        "The deploy tooling refuses application bundles over 200 MB uncompressed, ahead of Lambda's 250 MB hard limit.",
       ],
     },
     {
@@ -4794,7 +4806,7 @@ export const GENERATED_DOC_CONTENT: Record<string, RenderableTreeNode[]> = {
         language: "python",
       },
       children: [
-        'import os\n\nimport boto3\nfrom botocore.config import Config\n\ns3 = boto3.client(\n    "s3",\n    endpoint_url=os.environ["S3_ENDPOINT"],\n    region_name=os.environ["S3_REGION"],\n    aws_access_key_id=os.environ["S3_ACCESS_KEY_ID"],\n    aws_secret_access_key=os.environ["S3_SECRET_ACCESS_KEY"],\n    config=Config(s3={"addressing_style": "path"}),\n)\n\nbucket = os.environ["S3_BUCKET_NAME"]\ns3.put_object(Bucket=bucket, Key="photos/cat.jpg", Body=image_bytes)\nphoto = s3.get_object(Bucket=bucket, Key="photos/cat.jpg")["Body"].read()\n',
+        'import os\n\nimport boto3\nfrom botocore.config import Config\n\ns3 = boto3.client(\n    "s3",\n    endpoint_url=os.environ["S3_ENDPOINT"],\n    region_name=os.environ["S3_REGION"],\n    aws_access_key_id=os.environ["S3_ACCESS_KEY_ID"],\n    aws_secret_access_key=os.environ["S3_SECRET_ACCESS_KEY"],\n    config=Config(s3={"addressing_style": "path"}),\n)\n\nbucket = os.environ["S3_BUCKET_NAME"]\ns3.put_object(\n    Bucket=bucket,\n    Key="photos/cat.jpg",\n    Body=image_bytes,\n    ContentType="image/jpeg",\n    CacheControl="public, max-age=3600",\n)\nphoto = s3.get_object(Bucket=bucket, Key="photos/cat.jpg")["Body"].read()\n\n# Give a browser one hour to download this private object directly.\ndownload_url = s3.generate_presigned_url(\n    "get_object",\n    Params={"Bucket": bucket, "Key": "photos/cat.jpg"},\n    ExpiresIn=3600,\n)\n',
       ],
     },
     {
@@ -4821,7 +4833,207 @@ export const GENERATED_DOC_CONTENT: Record<string, RenderableTreeNode[]> = {
         language: "typescript",
       },
       children: [
-        'import { GetObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3"\n\nconst s3 = new S3Client({\n  endpoint: process.env.S3_ENDPOINT,\n  region: process.env.S3_REGION,\n  credentials: {\n    accessKeyId: process.env.S3_ACCESS_KEY_ID!,\n    secretAccessKey: process.env.S3_SECRET_ACCESS_KEY!,\n  },\n  forcePathStyle: true,\n})\n\nconst Bucket = process.env.S3_BUCKET_NAME!\nawait s3.send(new PutObjectCommand({ Bucket, Key: "exports/report.json", Body: report }))\nconst stored = await s3.send(new GetObjectCommand({ Bucket, Key: "exports/report.json" }))\n',
+        'import {\n  GetObjectCommand,\n  PutObjectAclCommand,\n  PutObjectCommand,\n  S3Client,\n} from "@aws-sdk/client-s3"\nimport { getSignedUrl } from "@aws-sdk/s3-request-presigner"\n\nconst s3 = new S3Client({\n  endpoint: process.env.S3_ENDPOINT,\n  region: process.env.S3_REGION,\n  credentials: {\n    accessKeyId: process.env.S3_ACCESS_KEY_ID!,\n    secretAccessKey: process.env.S3_SECRET_ACCESS_KEY!,\n  },\n  forcePathStyle: true,\n})\n\nconst Bucket = process.env.S3_BUCKET_NAME!\nawait s3.send(\n  new PutObjectCommand({\n    Bucket,\n    Key: "exports/report.json",\n    Body: report,\n    ContentType: "application/json",\n    CacheControl: "public, max-age=3600",\n  }),\n)\nconst stored = await s3.send(new GetObjectCommand({ Bucket, Key: "exports/report.json" }))\n\n// Let a browser upload directly without receiving the storage credential.\nconst uploadUrl = await getSignedUrl(\n  s3,\n  new PutObjectCommand({ Bucket, Key: "uploads/photo.jpg", ContentType: "image/jpeg" }),\n  { expiresIn: 15 * 60 },\n)\nawait fetch(uploadUrl, {\n  method: "PUT",\n  headers: { "Content-Type": "image/jpeg" },\n  body: imageFile,\n})\n\n// Change one object\'s anonymous-read override later.\nawait s3.send(new PutObjectAclCommand({ Bucket, Key: "exports/report.json", ACL: "public-read" }))\n',
+      ],
+    },
+    {
+      $$mdtype: "Tag",
+      name: "Heading",
+      attributes: {
+        level: 2,
+        id: "presigned-urls",
+      },
+      children: ["Presigned URLs"],
+    },
+    {
+      $$mdtype: "Tag",
+      name: "p",
+      attributes: {},
+      children: [
+        "Presigned URLs work for the supported read, write, head, delete, list, ACL, and multipart operations. They are suitable for direct browser uploads and downloads because the browser receives a time-limited URL, not the storage secret. Use the exact endpoint, region, path-style setting, method, headers, and query parameters that were signed.",
+      ],
+    },
+    {
+      $$mdtype: "Tag",
+      name: "p",
+      attributes: {},
+      children: [
+        "An expiry may be from 1 second through the SigV4 maximum of 7 days. The proxy still checks the credential, service status, bucket boundary, and available credit when the request arrives. Rotating the credential, deleting it, or suspending the service therefore revokes an otherwise unexpired URL.",
+      ],
+    },
+    {
+      $$mdtype: "Tag",
+      name: "p",
+      attributes: {},
+      children: [
+        "Browser preflights and presigned responses allow cross-origin access. If a header such as ",
+        {
+          $$mdtype: "Tag",
+          name: "code",
+          attributes: {},
+          children: ["Content-Type"],
+        },
+        " was part of the signature, send the same value from the browser.",
+      ],
+    },
+    {
+      $$mdtype: "Tag",
+      name: "Heading",
+      attributes: {
+        level: 2,
+        id: "public-objects",
+      },
+      children: ["Public objects"],
+    },
+    {
+      $$mdtype: "Tag",
+      name: "p",
+      attributes: {},
+      children: [
+        "Object storage is private by default. In ",
+        {
+          $$mdtype: "Tag",
+          name: "strong",
+          attributes: {},
+          children: ["Databases"],
+        },
+        ", open the object-storage service's actions and enable ",
+        {
+          $$mdtype: "Tag",
+          name: "strong",
+          attributes: {},
+          children: ["Public reads"],
+        },
+        " to make plain object URLs readable unless an object has a private override. The same setting is available from ",
+        {
+          $$mdtype: "Tag",
+          name: "code",
+          attributes: {},
+          children: ["PATCH /v1/{orgSlug}/services/{serviceId}/object-storage-access"],
+        },
+        " with ",
+        {
+          $$mdtype: "Tag",
+          name: "code",
+          attributes: {},
+          children: ['{ "publicRead": true }'],
+        },
+        ".",
+      ],
+    },
+    {
+      $$mdtype: "Tag",
+      name: "p",
+      attributes: {},
+      children: [
+        "Set the S3 canned ACL ",
+        {
+          $$mdtype: "Tag",
+          name: "code",
+          attributes: {},
+          children: ["public-read"],
+        },
+        " or ",
+        {
+          $$mdtype: "Tag",
+          name: "code",
+          attributes: {},
+          children: ["private"],
+        },
+        " on an upload, or use ",
+        {
+          $$mdtype: "Tag",
+          name: "code",
+          attributes: {},
+          children: ["PutObjectAcl"],
+        },
+        ", to override that default for one object. ",
+        {
+          $$mdtype: "Tag",
+          name: "code",
+          attributes: {},
+          children: ["GetObjectAcl"],
+        },
+        " reports the effective setting. Other canned ACLs and custom grant documents are not supported. Changing the service default affects objects without an override; it does not erase per-object overrides.",
+      ],
+    },
+    {
+      $$mdtype: "Tag",
+      name: "p",
+      attributes: {},
+      children: ["A public URL has this form:"],
+    },
+    {
+      $$mdtype: "Tag",
+      name: "CodeBlock",
+      attributes: {
+        language: "text",
+      },
+      children: ["${S3_ENDPOINT}/${S3_BUCKET_NAME}/path/to/object\n"],
+    },
+    {
+      $$mdtype: "Tag",
+      name: "p",
+      attributes: {},
+      children: [
+        "Only anonymous ",
+        {
+          $$mdtype: "Tag",
+          name: "code",
+          attributes: {},
+          children: ["GET"],
+        },
+        " and ",
+        {
+          $$mdtype: "Tag",
+          name: "code",
+          attributes: {},
+          children: ["HEAD"],
+        },
+        " requests for object keys are public. Listings, writes, deletes, and ACL changes still require SigV4. The backing bucket remains private: the public decision is made by the SproutOS proxy, so a public object does not expose the physical bucket or another tenant's prefix.",
+      ],
+    },
+    {
+      $$mdtype: "Tag",
+      name: "p",
+      attributes: {},
+      children: [
+        "The proxy preserves ",
+        {
+          $$mdtype: "Tag",
+          name: "code",
+          attributes: {},
+          children: ["Content-Type"],
+        },
+        ", ",
+        {
+          $$mdtype: "Tag",
+          name: "code",
+          attributes: {},
+          children: ["Cache-Control"],
+        },
+        ", ",
+        {
+          $$mdtype: "Tag",
+          name: "code",
+          attributes: {},
+          children: ["Content-Disposition"],
+        },
+        ", and ",
+        {
+          $$mdtype: "Tag",
+          name: "code",
+          attributes: {},
+          children: ["Content-Encoding"],
+        },
+        " metadata on uploads and returns the backing store's response headers. Set ",
+        {
+          $$mdtype: "Tag",
+          name: "code",
+          attributes: {},
+          children: ["Cache-Control"],
+        },
+        " deliberately: a browser or intermediary can keep a cached public response after access is made private until its cache lifetime expires. Use a private object plus a short-lived presigned URL when immediate revocation matters.",
       ],
     },
     {
@@ -4838,7 +5050,7 @@ export const GENERATED_DOC_CONTENT: Record<string, RenderableTreeNode[]> = {
       name: "p",
       attributes: {},
       children: [
-        "Object reads, writes, heads, deletes, listings, and ordinary SDK multipart uploads are supported. Multipart upload is the right choice when one upload request would exceed the service's per-request body limit.",
+        "Object reads, writes, heads, deletes, listings, canned object ACL reads and changes, and ordinary SDK multipart uploads are supported. Multipart upload is the right choice when one upload request would exceed the service's 64 MiB per-request body limit; keep each part at or below that limit.",
       ],
     },
     {
@@ -4846,21 +5058,21 @@ export const GENERATED_DOC_CONTENT: Record<string, RenderableTreeNode[]> = {
       name: "p",
       attributes: {},
       children: [
-        "Presigned URLs, virtual-host bucket addressing, SigV4 streaming-chunked uploads, server-side ",
+        "Virtual-host bucket addressing, SigV4 streaming-chunked uploads, server-side ",
         {
           $$mdtype: "Tag",
           name: "code",
           attributes: {},
           children: ["CopyObject"],
         },
-        ", and conditional or range reads are not supported. Download the source and upload a new object instead of using ",
+        ", object tagging, custom ACL grants, and conditional or range reads are not supported. Object tags are reserved for SproutOS access controls. Download the source and upload a new object instead of using ",
         {
           $$mdtype: "Tag",
           name: "code",
           attributes: {},
           children: ["CopyObject"],
         },
-        "; download a whole object rather than depending on a byte range. A presigned URL would let a request outlive the live credential check, virtual-host addressing would move the tenant decision into customer-controlled DNS, and streaming-chunked SigV4 requires verification of every signed frame.",
+        "; download a whole object rather than depending on a byte range.",
       ],
     },
     {
@@ -4868,7 +5080,14 @@ export const GENERATED_DOC_CONTENT: Record<string, RenderableTreeNode[]> = {
       name: "p",
       attributes: {},
       children: [
-        "The proxy spools an upload to bounded disk while verifying its payload signature, then streams it to S3. Downloads stream with backpressure rather than being loaded into application memory.",
+        "The proxy spools an upload to bounded disk while verifying its payload signature, then streams it to S3. A presigned browser upload uses SigV4's ",
+        {
+          $$mdtype: "Tag",
+          name: "code",
+          attributes: {},
+          children: ["UNSIGNED-PAYLOAD"],
+        },
+        ", but its method, path, query, expiry, and signed headers are still verified before the body is forwarded. Downloads stream with backpressure rather than being loaded into application memory.",
       ],
     },
     {

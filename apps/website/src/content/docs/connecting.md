@@ -11,7 +11,7 @@ order: 13
 
 Provisioning or rotating Postgres, Valkey, or OpenSearch returns its connection URI once. Put it in the project's encrypted environment variables. SproutOS stores a verifier, not a recoverable copy, so those URIs cannot be revealed later.
 
-Object storage is the exception. Its secret is derived rather than stored, so an authorized organization member can use **View credentials** again. Rotation still revokes the old access immediately at the storage proxy. See [Use object storage](/docs/object-storage) for SDK configuration and supported operations.
+Object storage is the exception. Its secret is derived rather than stored, so an authorized organization member can use **View credentials** again. An application can mint presigned URLs for supported S3 operations without handing that secret to a browser. Presigned URLs may last at most seven days, and rotation still revokes both ordinary credential use and unexpired URLs immediately at the storage proxy. See [Use object storage](/docs/object-storage) for SDK configuration, public-read controls, limits, and unsupported operations.
 
 ## Service variables
 

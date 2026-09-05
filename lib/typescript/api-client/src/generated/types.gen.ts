@@ -3725,6 +3725,7 @@ export type GetV1OrgsByOrgSlugServicesResponses = {
       database: string | null
       username: string | null
       keyPrefix?: string
+      publicRead: boolean | null
       managedByOauthApp: {
         clientId: string
         name: string
@@ -3742,6 +3743,7 @@ export type PostV1OrgsByOrgSlugServicesData = {
     name: string
     kind: "postgres" | "valkey" | "elasticsearch" | "object_storage"
     projectId?: string | null
+    publicRead?: boolean
   }
   path: {
     orgSlug: string
@@ -3823,6 +3825,49 @@ export type GetV1OrgsByOrgSlugServicesByServiceIdConnectionResponses = {
 
 export type GetV1OrgsByOrgSlugServicesByServiceIdConnectionResponse =
   GetV1OrgsByOrgSlugServicesByServiceIdConnectionResponses[keyof GetV1OrgsByOrgSlugServicesByServiceIdConnectionResponses]
+
+export type PatchV1OrgsByOrgSlugServicesByServiceIdObjectStorageAccessData = {
+  body?: {
+    publicRead: boolean
+  }
+  path: {
+    orgSlug: string
+    serviceId: string
+  }
+  query?: never
+  url: "/v1/orgs/{orgSlug}/services/{serviceId}/object-storage-access"
+}
+
+export type PatchV1OrgsByOrgSlugServicesByServiceIdObjectStorageAccessErrors = {
+  /**
+   * The service is not active object storage
+   */
+  400: ErrorResponseT
+  /**
+   * Caller lacks database:update
+   */
+  403: ErrorResponseT
+  /**
+   * No such service
+   */
+  404: ErrorResponseT
+}
+
+export type PatchV1OrgsByOrgSlugServicesByServiceIdObjectStorageAccessError =
+  PatchV1OrgsByOrgSlugServicesByServiceIdObjectStorageAccessErrors[keyof PatchV1OrgsByOrgSlugServicesByServiceIdObjectStorageAccessErrors]
+
+export type PatchV1OrgsByOrgSlugServicesByServiceIdObjectStorageAccessResponses = {
+  /**
+   * Updated object-storage access policy
+   */
+  200: {
+    id: string
+    publicRead: boolean
+  }
+}
+
+export type PatchV1OrgsByOrgSlugServicesByServiceIdObjectStorageAccessResponse =
+  PatchV1OrgsByOrgSlugServicesByServiceIdObjectStorageAccessResponses[keyof PatchV1OrgsByOrgSlugServicesByServiceIdObjectStorageAccessResponses]
 
 export type PostV1OrgsByOrgSlugServicesByServiceIdRotateData = {
   body?: never

@@ -13,7 +13,9 @@ An invocation runs for at most 15 minutes. Split longer jobs and enqueue the rem
 
 ## Payloads and builds
 
-Request and response bodies are limited to 6 MB; use object storage for larger data. The deploy tooling refuses application bundles over 200 MB uncompressed, ahead of Lambda's 250 MB hard limit.
+Application request and response bodies routed through a deployed function are limited to 6 MB. Object-storage traffic uses the separate S3-compatible storage endpoint and has a 64 MiB limit per request; use an SDK multipart upload for larger objects and keep each part at or below that limit. Presigned URLs can send browser uploads and downloads directly to that endpoint without passing the bytes through your application.
+
+The deploy tooling refuses application bundles over 200 MB uncompressed, ahead of Lambda's 250 MB hard limit.
 
 ## Concurrency
 
